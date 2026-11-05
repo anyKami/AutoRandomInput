@@ -56,7 +56,7 @@ test('new messages are saved before the host creates their DOM nodes', async t =
     assert.deepEqual(h.updated, []);
     assert.equal(h.saved.length, 1);
     assert.ok(JSON.parse(h.saved[0])[0].extra[SETTINGS_KEY]);
-    assert.ok(message.mes.includes('随机指令'));
+    assert.ok(message.mes.includes('本轮指令'));
 });
 
 test('recall reads all independently rolled commands before building its result, without a second roll on save', async t => {
@@ -114,7 +114,7 @@ test('empty outcomes remain empty after recall wraps the input and nested genera
     const message = await h.commit();
     assert.equal(random.mock.callCount(), 2);
     assert.ok(message.extra[SETTINGS_KEY].rolls.every(roll => roll.skipped));
-    assert.ok(!message.mes.includes('随机指令'));
+    assert.ok(!message.mes.includes('本轮指令'));
     assert.ok(!message.mes.includes('投掷结果'));
 });
 

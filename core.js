@@ -27,13 +27,13 @@ export function createGroup(name, source) {
 export function createSampleGroup() {
     const group = createGroup('通用剧情样板');
     group.rules = [
-        createRule('剧情变化', { diceSides: 6, commands: [
-            '让一位意料之外的访客走进当前场景，并自然地加入对话。',
-            '描写一个容易被忽略的环境细节，让它成为接下来的线索。',
-            '让场景中的一位人物提出一个合理的小请求，增加互动机会。',
-            '引入一个小小的意外，为当前互动增加变化，但保持情节自然。',
-            '让一个符合当前场景的小物件成为互动的契机。',
-            '让故事出现一个有意义的选择，把决定留给用户。',
+        createRule('进展判定', { diceSides: 6, commands: [
+            '让当前行动遭遇失败，未能达成预期目标，失败原因应符合已有情境。',
+            '让当前行动遇到意料之外的阻力，需要克服新的障碍才能继续推进。',
+            '让当前行动出现一点小问题，但整体仍能继续推进。',
+            '让当前行动按预期推进，取得正常、合理的结果。',
+            '让当前行动顺利推进，并带来一项小小的意外收获。',
+            '让当前行动取得远超预期的成果，带来显著且合理的额外收益。',
         ] }),
         createRule('情绪氛围', { diceSides: 4, commands: [
             '让对话的氛围更加轻松，用自然的幽默拉近人物之间的距离。',
@@ -102,7 +102,7 @@ function makeBlock(command, stealth) {
         const escaped = command.replaceAll('--', '-&#45;');
         return { block: `\n\n<!--\n${escaped}\n-->`, display: '' };
     }
-    const display = `\n\n> **随机指令**\n> ${command.split('\n').join('\n> ')}`;
+    const display = `\n\n> **本轮指令**\n> ${command.split('\n').join('\n> ')}`;
     return { block: display, display };
 }
 

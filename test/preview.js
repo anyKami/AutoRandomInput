@@ -194,7 +194,7 @@ document.getElementById('run-ui-tests').addEventListener('click', async () => {
         check('删除当前组后选择有效，最后一组受到保护', ctx.extensionSettings[SETTINGS_KEY].groups.some(group => group.id === ctx.extensionSettings[SETTINGS_KEY].activeGroupId) && query('#ari-delete-group').disabled);
         query('#ari-add-sample').click();
         const sample = activeGroup(ctx.extensionSettings[SETTINGS_KEY]);
-        check('样板组包含剧情 d6、情绪 d4、节奏 d3 和十三条命令', sample.rules.map(rule => rule.diceSides).join(',') === '6,4,3' && sample.rules.reduce((count, rule) => count + rule.commands.filter(text => text.trim()).length, 0) === 13);
+        check('样板组包含进展 d6、情绪 d4、节奏 d3 和十三条命令', sample.rules.map(rule => rule.diceSides).join(',') === '6,4,3' && sample.rules.reduce((count, rule) => count + rule.commands.filter(text => text.trim()).length, 0) === 13);
         query('#ari-add-sample').click();
         const secondSample = activeGroup(ctx.extensionSettings[SETTINGS_KEY]);
         check('重复添加样板生成独立组，不覆盖原有组', secondSample.id !== sample.id && secondSample.name !== sample.name && ctx.extensionSettings[SETTINGS_KEY].groups.length === 3);
@@ -203,7 +203,7 @@ document.getElementById('run-ui-tests').addEventListener('click', async () => {
         await send('召回顺序测试');
         const recalled = ctx.chat.at(-1);
         check('召回读取前已追加随机指令', query('#preview-recall-input').textContent.includes(secondSample.rules[0].commands[0]));
-        check('最终消息先放随机指令，再放召回结果，正文不含 ARI 标记', recalled.mes.indexOf('随机指令') >= 0 && recalled.mes.indexOf('随机指令') < recalled.mes.indexOf('</本轮用户输入>') && recalled.mes.indexOf('</本轮用户输入>') < recalled.mes.indexOf('<recall>') && !recalled.mes.includes('<!--'));
+        check('最终消息先放本轮指令，再放召回结果，正文不含 ARI 标记', recalled.mes.indexOf('本轮指令') >= 0 && recalled.mes.indexOf('本轮指令') < recalled.mes.indexOf('</本轮用户输入>') && recalled.mes.indexOf('</本轮用户输入>') < recalled.mes.indexOf('<recall>') && !recalled.mes.includes('<!--'));
         output.textContent += '\n全部界面检查通过。';
     } catch (error) { output.textContent += `FAIL ${error.message}\n${error.stack}`; }
     finally {
