@@ -1,0 +1,72 @@
+<dialog id="ari-workbench" aria-labelledby="ari-title">
+  <header class="ari-header">
+    <div class="ari-brand">
+      <svg class="ari-brand-mark" viewBox="0 0 40 44" fill="none" aria-hidden="true">
+        <path d="M20 2 38 13v18L20 42 2 31V13L20 2Z M2 13l18 10 18-10 M20 23v19 M20 2v21" />
+        <circle cx="20" cy="23" r="3" />
+      </svg>
+      <div><span class="ari-eyebrow">AUTO RANDOM INPUT</span><h2 id="ari-title">随机指令工作台</h2></div>
+    </div>
+    <div class="ari-header-actions">
+      <select id="ari-theme" aria-label="界面主题" title="界面背景主题"></select>
+      <label class="ari-toggle ari-master"><input id="ari-enabled" type="checkbox"><span class="ari-switch"></span><span id="ari-enabled-label">自动投掷已关闭</span></label>
+      <button id="ari-close" class="ari-icon-button" type="button" aria-label="关闭工作台">×</button>
+    </div>
+  </header>
+
+  <div class="ari-layout">
+    <aside class="ari-sidebar" aria-label="随机配置">
+      <section class="ari-group-section">
+        <label class="ari-section-label" for="ari-group">配置组 <span id="ari-group-count"></span></label>
+        <select id="ari-group" aria-label="当前配置组"></select>
+        <div class="ari-group-actions">
+          <button type="button" data-group-action="new">＋ 新建</button>
+          <button type="button" data-group-action="copy">复制</button>
+          <button type="button" data-group-action="rename">重命名</button>
+          <button id="ari-delete-group" type="button" data-group-action="delete">删除</button>
+          <button id="ari-add-sample" class="ari-sample-button" type="button">＋ 添加样板</button>
+        </div>
+        <form id="ari-group-form" hidden>
+          <label id="ari-group-form-label" for="ari-group-name"></label>
+          <input id="ari-group-name" type="text" maxlength="50" autocomplete="off">
+          <p id="ari-group-error" role="alert"></p>
+          <div class="ari-form-actions"><button id="ari-group-cancel" type="button">取消</button><button class="ari-primary" id="ari-group-confirm" type="submit">确定</button></div>
+        </form>
+      </section>
+
+      <section class="ari-rules-section">
+        <div class="ari-section-label"><span>骰子指令 <span id="ari-rule-count"></span></span><button id="ari-add-rule" type="button">＋ 添加</button></div>
+        <div id="ari-rule-list"></div>
+        <p class="ari-rules-hint">每套启用的指令独立投掷，结果一起发送。</p>
+      </section>
+
+      <section class="ari-options-section">
+        <label class="ari-toggle"><span>隐身发送</span><input id="ari-stealth" type="checkbox"><span class="ari-switch"></span></label>
+        <p id="ari-mode-hint">命令会显示在聊天正文末尾。</p>
+        <label class="ari-toggle ari-result-toggle"><span>附上投掷结果</span><input id="ari-include-result" type="checkbox"><span class="ari-switch"></span></label>
+        <p class="ari-option-hint">在每条命令后附上「d6 = 4」等结果。</p>
+        <div class="ari-last-roll" aria-live="polite">
+          <span class="ari-eyebrow">最近一次投掷</span>
+          <p id="ari-last-group">等待下一次发送</p>
+          <div id="ari-last-rolls"></div>
+        </div>
+      </section>
+    </aside>
+
+    <section class="ari-editor" aria-labelledby="ari-commands-title">
+      <div class="ari-editor-heading"><div><span class="ari-eyebrow">INDEPENDENT DICE</span><h3 id="ari-commands-title">指令编辑</h3></div><span class="ari-save-status"><span></span>修改自动保存</span></div>
+      <div class="ari-rule-editor">
+        <div class="ari-dice-visual" aria-hidden="true"><svg viewBox="0 0 176 166" fill="none"><path d="m88 6 73 43v76l-73 35-73-35V49L88 6Z"/><path d="m88 6 43 86-43 68-43-68L88 6Z M15 49l30 43-30 33 M161 49l-30 43 30 33 M45 92h86"/></svg><strong id="ari-dice-label">D10</strong></div>
+        <div class="ari-rule-name-field"><label for="ari-rule-name">指令名称</label><input id="ari-rule-name" type="text" maxlength="40" autocomplete="off"></div>
+        <div class="ari-rule-actions"><button id="ari-copy-rule" type="button">复制指令</button><button id="ari-delete-rule" type="button">删除指令</button></div>
+      </div>
+      <div class="ari-rule-options"><label for="ari-sides">骰子范围 <select id="ari-sides" aria-label="骰子面数"></select></label><div class="ari-dice-facts"><span>抽取范围 <b id="ari-range">1–10</b></span><span>每条概率 <b id="ari-probability">10%</b></span></div></div>
+      <p id="ari-disabled-hint" hidden>此指令已暂停。启用后会参与每次发送时的独立投掷。</p>
+      <div class="ari-deck-meta"><span id="ari-filled-count"></span><span>空白命令 · 投中跳过</span></div>
+      <div id="ari-command-grid"></div>
+      <p id="ari-hidden-hint" class="ari-hidden-hint" hidden></p>
+    </section>
+  </div>
+
+  <footer class="ari-footer"><span><span class="ari-status-dot"></span>开启自动投掷后，每次发送会替换此前的随机指令。</span><span class="ari-escape-hint"><kbd>Esc</kbd> 关闭</span></footer>
+</dialog>

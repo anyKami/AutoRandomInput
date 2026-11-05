@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>AutoRandomInput · 本地预览</title>
+  <link rel="stylesheet" href="../style.css">
+  <style>
+    body { margin: 0; padding: 32px; background: #253347; color: #e2e9f3; font: 14px/1.7 system-ui, sans-serif; }
+    h1 { font-size: 22px; margin: 0; }
+    p { color: #bdc9d9; }
+    button, input, textarea { font: inherit; }
+    body > section { max-width: 920px; margin: 20px auto; }
+    #extensionsMenu, .preview-controls { display: flex; flex-wrap: wrap; gap: 8px; margin: 16px 0; }
+    .preview-controls button, #extensionsMenu button { cursor: pointer; padding: 8px 14px; border: 1px solid #5b6b81; border-radius: 8px; background: #33455e; color: #edf1f7; }
+    #send_textarea { width: 100%; min-height: 80px; box-sizing: border-box; background: #172334; color: #edf1f7; padding: 12px; border: 1px solid #53677e; border-radius: 8px; }
+    .preview-message { background: #19283b; border: 1px solid #41526b; border-radius: 10px; padding: 16px; margin-bottom: 12px; }
+    .preview-rendered, .preview-message pre { white-space: pre-wrap; overflow-wrap: anywhere; }
+    .preview-message summary { color: #b9c7d9; cursor: pointer; margin-top: 10px; }
+    .preview-message pre { font-size: 12px; color: #adbbce; }
+    #test-results { white-space: pre-wrap; background: #0e1b2a; padding: 16px; border-radius: 10px; }
+    a { color: #f0bd7b; }
+    @media (max-width: 480px) { body { padding: 16px; } }
+  </style>
+</head>
+<body>
+  <section>
+    <h1>AutoRandomInput · 隔离预览</h1>
+    <p>模拟 SillyTavern 发送与显示接口。不会访问真实聊天或连接模型。</p>
+    <div id="extensionsMenu"></div>
+    <div class="preview-controls"><button id="run-ui-tests">运行界面检查</button><button id="preview-regenerate">模拟重新生成</button><a href="/mobile" target="_blank">390px 手机预览</a></div>
+    <pre id="test-results" hidden></pre>
+    <textarea id="send_textarea" placeholder="输入一条测试消息…">我推开酒馆的大门，环顾四周。</textarea>
+    <div class="preview-controls"><button id="send_but">发送测试消息</button><span id="save-count"></span></div>
+    <div id="preview-chat"></div>
+  </section>
+  <script type="module" src="./preview.js"></script>
+</body>
+</html>
