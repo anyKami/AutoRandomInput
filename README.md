@@ -53,19 +53,6 @@ https://github.com/anyKami/AutoRandomInput
 
 旧版单套配置会自动转换为组内一套骰子指令，保留所有已填写内容和骰子面数。
 
-## 开发验证
+## 感谢
 
-需要 Node.js 20 或更高版本；没有第三方 npm 依赖。
-
-```sh
-npm test
-npm run preview
-```
-
-预览地址为 `http://127.0.0.1:18743`。这是隔离的模拟宿主，仅在当前浏览器保存演示配置，不连接模型、不访问真实聊天。关闭工作台后可运行界面检查，或勾选「模拟召回」发送测试消息，比较召回读取的输入与最终原始消息。测试覆盖独立随机数、命令映射、召回前插入、重复事件、取消重试、配置迁移和历史清理。
-
-## 设计与参考
-
-采用可切换配色的双栏工作台、骰子指令列表和编号命令卡片。小屏幕切换为纵向布局，与参考项目的灰色指令列表弹窗区分。[查看手机预览](docs/mobile-preview.jpg)
-
-功能思路参考 [AutoInstructionAppender](https://github.com/anyKami/AutoInstructionAppender)（作者 Veridis）；本项目的界面、配置组与随机处理代码独立实现，不修改原扩展，也不读取其设置。
+功能思路参考 [AutoInstructionAppender](https://github.com/anyKami/AutoInstructionAppender)（作者 @Veridis）；本项目的界面、配置组与随机处理代码独立实现。
