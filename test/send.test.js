@@ -1,0 +1,175 @@
+import assert from 'node:assert/strict';
+import test from 'node:test';
+import { SETTINGS_KEY, activeGroup, createRule, normalizeSettings, processMessage } from '../core.js';
+import { installSendHooks } from '../send.js';
+
+const user = mes => ({ is_user: true, is_system: false, mes, extra: {} });
+function host() {
+    const settings = normalizeSettings();
+    settings.enabled = true;
+    settings.includeRollResult = true;
+    const rule = activeGroup(settings).rules[0];
+    rule.diceSides = 6;
+    rule.commands = Array.from({ length: 10 }, (_, i) => `剧情命令 ${i + 1}`);
+    activeGroup(settings).rules.push(createRule('情绪', { diceSides: 4, commands: ['情绪命令', '', '', '其他情绪'] }));
+    const listeners = new Map();
+    const input = { value: '用户输入', notifications: 0, dispatchEvent() { this.notifications++; } };
+    const saved = [];
+    const updated = [];
+    const ctx = {
+        chat: [], extensionSettings: { [SETTINGS_KEY]: settings },
+        eventTypes: { GENERATION_AFTER_COMMANDS: 'before', MESSAGE_SENT: 'sent', CHAT_CHANGED: 'chat' },
+        eventSource: {
+            on(type, fn) { const list = listeners.get(type) ?? []; list.push(fn); listeners.set(type, list); },
+            makeFirst(type, fn) { const list = listeners.get(type) ?? []; list.unshift(fn); listeners.set(type, list); },
+            async emit(type, ...args) { for (const fn of [...(listeners.get(type) ?? [])]) await fn(...args); },
+        },
+        updateMessageBlock(id) { updated.push(id); },
+        async saveChat() { saved.push(JSON.stringify(this.chat)); },
+    };
+    return { ctx, input, settings, saved, updated,
+        install: () => installSendHooks(() => ctx, () => {}, () => input),
+        before: (type = 'normal', params = {}, dryRun = false) => ctx.eventSource.emit('before', type, params, dryRun),
+        async commit(text = input.value) {
+            input.value = '';
+            const id = ctx.chat.push(user(text)) - 1;
+            await ctx.eventSource.emit('sent', id);
+            return ctx.chat[id];
+        },
+    };
+}
+
+test('recall reads all independently rolled commands before building its result, without a second roll on save', async t => {
+    const h = host();
+    const values = [0.999, 0];
+    t.mock.method(Math, 'random', () => { assert.ok(values.length, 'unexpected extra roll'); return values.shift(); });
+    let recallInput;
+    let recordedBeforeOtherListeners = false;
+    // Register recall first, as when the database has already loaded.
+    h.ctx.eventSource.on('before', () => {
+        recallInput = h.input.value;
+        h.input.value = `<本轮用户输入>\n${recallInput}\n</本轮用户输入>\n<recall>模拟召回</recall>`;
+    });
+    h.ctx.eventSource.on('sent', id => { recordedBeforeOtherListeners = !!h.ctx.chat[id].extra[SETTINGS_KEY]; });
+    await h.install();
+    await h.before();
+    assert.ok(recallInput.includes('剧情命令 6\n> （投掷结果：d6 = 6）'));
+    assert.ok(recallInput.includes('情绪命令\n> （投掷结果：d4 = 1）'));
+    const message = await h.commit();
+    assert.deepEqual(message.extra[SETTINGS_KEY].rolls.map(roll => roll.result), [6, 1]);
+    assert.equal(values.length, 0);
+    assert.equal(message.mes.split('剧情命令 6').length, 2);
+    assert.ok(message.mes.indexOf('情绪命令') < message.mes.indexOf('</本轮用户输入>'));
+    assert.ok(message.mes.indexOf('</本轮用户输入>') < message.mes.indexOf('<recall>'));
+    assert.ok(!message.mes.includes('ARI:'));
+    assert.equal(recordedBeforeOtherListeners, true);
+    assert.equal(h.saved.length, 1);
+});
+
+test('cancelled sends and nested group generation reuse a prepared roll; duplicate events do not roll', async t => {
+    const h = host();
+    const random = t.mock.method(Math, 'random', () => 0);
+    await h.install();
+    await h.before();
+    const prepared = h.input.value;
+    await h.before();
+    assert.equal(h.input.value, prepared);
+    assert.equal(random.mock.callCount(), 2);
+    assert.equal(h.saved.length, 0);
+    await h.commit();
+    await h.ctx.eventSource.emit('sent', 0);
+    await h.before();
+    assert.equal(random.mock.callCount(), 2);
+    assert.equal(h.saved.length, 1);
+});
+
+test('empty outcomes remain empty after recall wraps the input and nested generation runs', async t => {
+    const h = host();
+    for (const rule of activeGroup(h.settings).rules) rule.commands[0] = '';
+    const random = t.mock.method(Math, 'random', () => 0);
+    await h.install();
+    await h.before();
+    h.input.value = `<本轮用户输入>${h.input.value}</本轮用户输入>\n<recall>记忆</recall>`;
+    await h.before();
+    const message = await h.commit();
+    assert.equal(random.mock.callCount(), 2);
+    assert.ok(message.extra[SETTINGS_KEY].rolls.every(roll => roll.skipped));
+    assert.ok(!message.mes.includes('随机指令'));
+    assert.ok(!message.mes.includes('投掷结果'));
+});
+
+test('dry runs, automatic generation, regeneration, continuation and disabled or blank drafts are not prepared', async t => {
+    const h = host();
+    t.mock.method(Math, 'random', () => { throw new Error('must not roll'); });
+    await h.install();
+    for (const type of ['regenerate', 'continue', 'swipe', 'quiet', 'impersonate']) await h.before(type);
+    await h.before('normal', {}, true);
+    await h.before('normal', { automatic_trigger: true });
+    h.settings.enabled = false;
+    await h.before();
+    assert.equal(h.input.value, '用户输入');
+    h.settings.enabled = true;
+    h.input.value = ' \n ';
+    await h.before();
+    assert.equal(h.input.value, ' \n ');
+    assert.equal(h.input.notifications, 0);
+    assert.equal(h.saved.length, 0);
+});
+
+test('host text transformations and settings changes do not reroll or append commands after recall', async t => {
+    const h = host();
+    const random = t.mock.method(Math, 'random', () => 0);
+    await h.install();
+    await h.before();
+    const transformed = `<本轮用户输入>${h.input.value.replace('剧情命令 1', '宿主改写的命令')}</本轮用户输入><recall>记忆</recall>`;
+    h.settings.enabled = false;
+    const message = await h.commit(transformed);
+    assert.equal(message.mes, transformed);
+    assert.equal(message.extra[SETTINGS_KEY].block, '');
+    assert.deepEqual(message.extra[SETTINGS_KEY].rolls.map(roll => roll.result), [1, 1]);
+    assert.equal(random.mock.callCount(), 2);
+});
+
+test('switching chats discards pending results and script-created user messages still get a fresh roll', async t => {
+    const h = host();
+    const values = [0, 0, 0.999, 0.999];
+    t.mock.method(Math, 'random', () => { assert.ok(values.length); return values.shift(); });
+    await h.install();
+    await h.before();
+    h.ctx.chat = [];
+    await h.ctx.eventSource.emit('chat');
+    const message = await h.commit('另一聊天的脚本输入');
+    assert.deepEqual(message.extra[SETTINGS_KEY].rolls.map(roll => roll.result), [6, 4]);
+    assert.ok(message.mes.includes('剧情命令 6'));
+    assert.ok(!message.mes.includes('剧情命令 1'));
+});
+
+test('history cleanup waits for an actual new message and preserves recall text', async () => {
+    const h = host();
+    const old = user('旧用户输入');
+    h.ctx.chat.push(old);
+    processMessage(h.ctx.chat, 0, h.settings, () => 0);
+    old.mes += '\n<recall>旧召回</recall>';
+    const before = old.mes;
+    await h.install();
+    await h.before();
+    assert.equal(old.mes, before);
+    await h.commit();
+    assert.equal(old.mes, '旧用户输入\n<recall>旧召回</recall>');
+    assert.deepEqual(h.updated, [0, 1]);
+});
+
+test('chat loading removes tracked old ARI wrappers and saves the migrated metadata once', async () => {
+    const h = host();
+    const display = '\n\n> **随机指令**\n> 保留命令';
+    const block = `\n\n<!-- ARI:legacy -->${display}\n<!-- /ARI:legacy -->`;
+    const message = user('原文' + block);
+    message.extra[SETTINGS_KEY] = { block, display };
+    h.ctx.chat.push(message);
+    await h.install();
+    assert.equal(message.mes, '原文' + display);
+    assert.equal(message.extra[SETTINGS_KEY].block, display);
+    assert.equal(h.saved.length, 1);
+    await h.ctx.eventSource.emit('chat');
+    assert.equal(h.saved.length, 1);
+});

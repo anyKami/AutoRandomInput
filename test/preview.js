@@ -37,9 +37,10 @@ const hooks = [];
 let saves = 0;
 const ctx = {
     extensionSettings: { [SETTINGS_KEY]: initial }, chat: [],
-    eventTypes: { APP_READY: 'ready', MESSAGE_SENT: 'sent', CHAT_CHANGED: 'chat', GENERATION_STARTED: 'generation' },
+    eventTypes: { APP_READY: 'ready', MESSAGE_SENT: 'sent', CHAT_CHANGED: 'chat', GENERATION_STARTED: 'generation', GENERATION_AFTER_COMMANDS: 'before' },
     eventSource: {
         on(type, fn) { const list = listeners.get(type) ?? []; list.push(fn); listeners.set(type, list); },
+        makeFirst(type, fn) { const list = listeners.get(type) ?? []; list.unshift(fn); listeners.set(type, list); },
         async emit(type, ...args) { for (const fn of listeners.get(type) ?? []) await fn(...args); },
     },
     saveSettingsDebounced() { localStorage.setItem(key, JSON.stringify(ctx.extensionSettings[SETTINGS_KEY])); },
@@ -68,12 +69,24 @@ function renderMessage(id) {
 
 async function send(text = document.getElementById('send_textarea').value) {
     if (!text.trim()) return;
-    ctx.chat.push({ is_user: true, is_system: false, mes: text, extra: {} });
+    const input = document.getElementById('send_textarea');
+    input.value = text;
+    await ctx.eventSource.emit('before', 'normal', {}, false);
+    ctx.chat.push({ is_user: true, is_system: false, mes: input.value, extra: {} });
     const id = ctx.chat.length - 1;
     await ctx.eventSource.emit('sent', id);
     renderMessage(id);
     document.getElementById('send_textarea').value = '';
 }
+// Register before the extension to verify its priority over an already loaded recall handler.
+ctx.eventSource.on('before', () => {
+    if (!document.getElementById('preview-recall').checked) return;
+    const input = document.getElementById('send_textarea');
+    const query = document.getElementById('preview-recall-input');
+    query.hidden = false;
+    query.textContent = `召回读取的本轮输入：\n${input.value}`;
+    input.value = `<本轮用户输入>\n${input.value}\n</本轮用户输入>\n\n<recall>这是模拟召回结果。</recall>`;
+});
 document.getElementById('send_but').addEventListener('click', () => send());
 document.getElementById('send_textarea').addEventListener('keydown', event => {
     if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) { event.preventDefault(); send(); }
@@ -91,6 +104,7 @@ document.getElementById('run-ui-tests').addEventListener('click', async () => {
     const backup = JSON.stringify(ctx.extensionSettings[SETTINGS_KEY]);
     const originalChat = ctx.chat;
     const originalRandom = Math.random;
+    const originalRecall = document.getElementById('preview-recall').checked;
     const query = selector => document.querySelector(selector);
     const set = (selector, value, event = 'change') => {
         const element = query(selector);
@@ -100,6 +114,7 @@ document.getElementById('run-ui-tests').addEventListener('click', async () => {
     const check = (name, condition) => { if (!condition) throw new Error(name); output.textContent += `PASS ${name}\n`; };
     try {
         ctx.chat = [];
+        set('#preview-recall', false);
         ctx.extensionSettings[SETTINGS_KEY] = normalizeSettings();
         document.getElementById('preview-chat').replaceChildren();
         query('#ari-menu-button').click();
@@ -179,10 +194,18 @@ document.getElementById('run-ui-tests').addEventListener('click', async () => {
         query('#ari-add-sample').click();
         const secondSample = activeGroup(ctx.extensionSettings[SETTINGS_KEY]);
         check('重复添加样板生成独立组，不覆盖原有组', secondSample.id !== sample.id && secondSample.name !== sample.name && ctx.extensionSettings[SETTINGS_KEY].groups.length === 3);
+        set('#ari-stealth', false);
+        set('#preview-recall', true);
+        await send('召回顺序测试');
+        const recalled = ctx.chat.at(-1);
+        check('召回读取前已追加随机指令', query('#preview-recall-input').textContent.includes(secondSample.rules[0].commands[0]));
+        check('最终消息先放随机指令，再放召回结果，正文不含 ARI 标记', recalled.mes.indexOf('随机指令') >= 0 && recalled.mes.indexOf('随机指令') < recalled.mes.indexOf('</本轮用户输入>') && recalled.mes.indexOf('</本轮用户输入>') < recalled.mes.indexOf('<recall>') && !recalled.mes.includes('<!--'));
         output.textContent += '\n全部界面检查通过。';
     } catch (error) { output.textContent += `FAIL ${error.message}\n${error.stack}`; }
     finally {
         Math.random = originalRandom;
+        query('#preview-recall').checked = originalRecall;
+        query('#preview-recall-input').hidden = true;
         ctx.extensionSettings[SETTINGS_KEY] = JSON.parse(backup);
         ctx.chat = originalChat;
         ctx.saveSettingsDebounced();

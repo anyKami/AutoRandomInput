@@ -97,21 +97,20 @@ export function rollDice(sides, random = Math.random) {
 
 function makeBlock(command, stealth) {
     if (!command.trim()) return { block: '', display: '' };
-    const id = newId();
     if (stealth) {
         // HTML comments must never contain a closing delimiter, including --!>.
         const escaped = command.replaceAll('--', '-&#45;');
-        return { block: `\n\n<!-- ARI:${id}\n${escaped}\n/ARI:${id} -->`, display: '' };
+        return { block: `\n\n<!--\n${escaped}\n-->`, display: '' };
     }
     const display = `\n\n> **随机指令**\n> ${command.split('\n').join('\n> ')}`;
-    return { block: `\n\n<!-- ARI:${id} -->${display}\n<!-- /ARI:${id} -->`, display };
+    return { block: display, display };
 }
 
 // Match the exact recorded fragment, never generic HTML comments or another plugin's tags.
 function replaceBlock(text, record, replacement = '') {
     if (!record?.block || typeof text !== 'string') return text;
     const start = text.lastIndexOf(record.block);
-    if (start < 0) return text;
+    if (start < 0 || text.indexOf(record.block) !== start) return text;
     return text.slice(0, start) + replacement + text.slice(start + record.block.length);
 }
 
@@ -119,11 +118,7 @@ export function displayMessage(text, record) {
     return replaceBlock(text, record, record?.display ?? '');
 }
 
-export function processMessage(chat, messageId, settings, random = Math.random) {
-    const message = chat[messageId];
-    if (!settings.enabled || !message?.is_user || message.is_system ||
-        typeof message.mes !== 'string' || !message.mes.trim() || message.extra?.[SETTINGS_KEY]) return null;
-
+export function createRollRecord(settings, random = Math.random) {
     const group = activeGroup(settings);
     const commands = [];
     const rolls = group.rules.filter(rule => rule.enabled).map(rule => {
@@ -133,8 +128,22 @@ export function processMessage(chat, messageId, settings, random = Math.random) 
         if (!skipped) commands.push(settings.includeRollResult ? `${command}\n（投掷结果：d${rule.diceSides} = ${result}）` : command);
         return { ruleId: rule.id, ruleName: rule.name, result, sides: rule.diceSides, skipped };
     });
-    const record = { groupId: group.id, groupName: group.name, rolls,
+    return { groupId: group.id, groupName: group.name, rolls,
         ...makeBlock(commands.join('\n\n'), settings.stealthMode) };
+}
+
+export function processMessage(chat, messageId, settings, random = Math.random, preparedRecord = null) {
+    const message = chat[messageId];
+    if ((!settings.enabled && !preparedRecord) || !message?.is_user || message.is_system ||
+        typeof message.mes !== 'string' || !message.mes.trim() || message.extra?.[SETTINGS_KEY]) return null;
+
+    const record = preparedRecord ? { ...preparedRecord } : createRollRecord(settings, random);
+    // Prepared commands have already passed through recall and the host's input processing.
+    // If another processor rewrote them, retain the roll without appending or claiming new text.
+    if (preparedRecord && record.block && !message.mes.includes(record.block)) {
+        record.block = '';
+        record.display = '';
+    }
     const changedIds = [];
 
     chat.forEach((old, index) => {
@@ -151,8 +160,29 @@ export function processMessage(chat, messageId, settings, random = Math.random) 
 
     message.extra ??= {};
     message.extra[SETTINGS_KEY] = record;
-    message.mes += record.block;
+    if (!preparedRecord) message.mes += record.block;
     if (record.block) delete message.extra.token_count;
     changedIds.push(messageId);
     return { changedIds, record };
+}
+
+export function removeLegacyMarkers(chat) {
+    const changedIds = [];
+    chat.forEach((message, index) => {
+        if (!message?.is_user || message.is_system) return;
+        const record = message.extra?.[SETTINGS_KEY];
+        if (!record?.block) return;
+        const visible = record.block.match(/^\n\n<!-- ARI:([^\s>]+) -->([\s\S]*)\n<!-- \/ARI:\1 -->$/);
+        const hidden = record.block.match(/^\n\n<!-- ARI:([^\s>]+)\n([\s\S]*)\n\/ARI:\1 -->$/);
+        if (!visible && !hidden) return;
+        const block = visible ? visible[2] : `\n\n<!--\n${hidden[2]}\n-->`;
+        const cleaned = replaceBlock(message.mes, record, block);
+        if (cleaned === message.mes) return;
+        message.mes = cleaned;
+        record.block = block;
+        record.display = visible ? block : '';
+        delete message.extra.token_count;
+        changedIds.push(index);
+    });
+    return changedIds;
 }

@@ -1,7 +1,7 @@
 {
   "display_name": "随机指令",
   "description": "多套 d1–d10 指令独立投掷，支持配置组、结果附加、隐身发送和背景主题。",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "author": "anyKami",
   "homepage": "https://github.com/anyKami/AutoRandomInput",
   "loading_order": 30,

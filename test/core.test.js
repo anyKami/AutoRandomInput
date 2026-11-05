@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { SETTINGS_KEY, activeGroup, createGroup, createRule, createSampleGroup, displayMessage, normalizeSettings, processMessage, rollDice } from '../core.js';
+import { SETTINGS_KEY, activeGroup, createGroup, createRule, createSampleGroup, displayMessage, normalizeSettings, processMessage, removeLegacyMarkers, rollDice } from '../core.js';
 
 const firstRule = settings => activeGroup(settings).rules[0];
 const user = mes => ({ is_user: true, is_system: false, mes, extra: {} });
@@ -144,6 +144,7 @@ test('multiline commands and replacement syntax remain literal; display hooks on
     assert.ok(shown.includes('第一行 $&'));
     assert.ok(shown.includes('/send 不应执行'));
     assert.ok(!shown.includes('<!-- ARI:'));
+    assert.ok(!raw.includes('<!--'));
     assert.equal(chat[0].mes, raw);
 });
 
@@ -158,6 +159,7 @@ test('hidden comments escape closing delimiters; rendering hides commands even i
     assert.equal((record.block.match(/-->/g) ?? []).length, 1);
     assert.equal((record.block.match(/<!--/g) ?? []).length, 1);
     assert.ok(!record.block.includes('--!>'));
+    assert.ok(!record.block.includes('ARI:'));
     assert.ok(chat[0].mes.includes('测试'));
     assert.equal(displayMessage(chat[0].mes, record), original);
 });
@@ -268,4 +270,42 @@ test('the sample group contains three independent, fully filled dice with thirte
     assert.notEqual(group.id, another.id);
     assert.notEqual(group.rules[0].id, another.rules[0].id);
     assert.notEqual(group.rules[0].commands[0], another.rules[0].commands[0]);
+});
+
+test('legacy visible and hidden wrappers migrate without changing commands or recall text', () => {
+    const display = '\n\n> **随机指令**\n> 旧命令';
+    const visible = `\n\n<!-- ARI:old-visible -->${display}\n<!-- /ARI:old-visible -->`;
+    const hidden = '\n\n<!-- ARI:old-hidden\n隐身旧命令\n/ARI:old-hidden -->';
+    const recall = '\n<recall>原有召回内容</recall>';
+    const chat = [user('用户输入' + visible + recall), user('另一条' + hidden)];
+    chat[0].extra[SETTINGS_KEY] = { block: visible, display };
+    chat[1].extra[SETTINGS_KEY] = { block: hidden, display: '' };
+    assert.deepEqual(removeLegacyMarkers(chat), [0, 1]);
+    assert.equal(chat[0].mes, '用户输入' + display + recall);
+    assert.equal(chat[1].mes, '另一条\n\n<!--\n隐身旧命令\n-->');
+    assert.equal(displayMessage(chat[1].mes, chat[1].extra[SETTINGS_KEY]), '另一条');
+    assert.deepEqual(removeLegacyMarkers(chat), []);
+    chat.push(user('下一条'));
+    processMessage(chat, 2, configured(), () => 0);
+    assert.equal(chat[0].mes, '用户输入' + recall);
+    assert.equal(chat[1].mes, '另一条');
+});
+
+test('migration leaves untracked comments and manually edited legacy fragments intact', () => {
+    const block = '\n\n<!-- ARI:old -->\n\n> 旧命令\n<!-- /ARI:old -->';
+    const chat = [user('未记录' + block), user('手工编辑' + block.replace('旧命令', '新内容'))];
+    chat[1].extra[SETTINGS_KEY] = { block, display: '\n\n> 旧命令' };
+    const before = JSON.stringify(chat);
+    assert.deepEqual(removeLegacyMarkers(chat), []);
+    assert.equal(JSON.stringify(chat), before);
+});
+
+test('ambiguous copies of a recorded fragment are preserved during cleanup', () => {
+    const chat = [user('用户原文')];
+    const { record } = processMessage(chat, 0, configured(), () => 0);
+    chat[0].mes += '\n用户复制的内容：' + record.block;
+    const edited = chat[0].mes;
+    chat.push(user('新消息'));
+    processMessage(chat, 1, configured(), () => 0);
+    assert.equal(chat[0].mes, edited);
 });

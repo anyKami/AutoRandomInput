@@ -1,4 +1,5 @@
-import { SETTINGS_KEY, THEMES, activeGroup, createGroup, createRule, createSampleGroup, displayMessage, normalizeSettings, processMessage, uniqueGroupName, uniqueName } from './core.js';
+import { SETTINGS_KEY, THEMES, activeGroup, createGroup, createRule, createSampleGroup, displayMessage, normalizeSettings, uniqueGroupName, uniqueName } from './core.js';
+import { installSendHooks } from './send.js';
 
 const context = () => SillyTavern.getContext();
 const settings = () => context().extensionSettings[SETTINGS_KEY];
@@ -240,29 +241,13 @@ function bindUI() {
     $('#ari-group-form').addEventListener('submit', submitGroup);
 }
 
-async function onMessageSent(messageId) {
-    try {
-        const ctx = context();
-        const outcome = processMessage(ctx.chat, messageId, settings());
-        if (!outcome) return;
-        for (const id of outcome.changedIds) ctx.updateMessageBlock(id, ctx.chat[id]);
-        renderLastRoll();
-        // MESSAGE_SENT is emitted after the host's initial save, so persist our changes explicitly.
-        await ctx.saveChat();
-    } catch (error) {
-        console.error('[AutoRandomInput] 消息处理失败', error);
-        globalThis.toastr?.error('随机指令处理或保存失败，请检查当前消息。', 'AutoRandomInput');
-    }
-}
-
 async function init() {
     if (initialized) return;
     initialized = true;
     const ctx = context();
     ctx.extensionSettings[SETTINGS_KEY] = normalizeSettings(ctx.extensionSettings[SETTINGS_KEY]);
     save();
-    ctx.eventSource.on(ctx.eventTypes.MESSAGE_SENT, onMessageSent);
-    ctx.eventSource.on(ctx.eventTypes.CHAT_CHANGED, renderLastRoll);
+    await installSendHooks(context, renderLastRoll);
     // On hosts with display hooks, hide before Markdown/HTML encoding; never modify the prompt here.
     if (ctx.messageFormatter?.addHook) {
         ctx.messageFormatter.addHook((text, meta) => meta.isUser
