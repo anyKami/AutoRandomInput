@@ -16,6 +16,7 @@ function host() {
     const input = { value: '用户输入', notifications: 0, dispatchEvent() { this.notifications++; } };
     const saved = [];
     const updated = [];
+    const rendered = new Set();
     const ctx = {
         chat: [], extensionSettings: { [SETTINGS_KEY]: settings },
         eventTypes: { GENERATION_AFTER_COMMANDS: 'before', MESSAGE_SENT: 'sent', CHAT_CHANGED: 'chat' },
@@ -24,20 +25,39 @@ function host() {
             makeFirst(type, fn) { const list = listeners.get(type) ?? []; list.unshift(fn); listeners.set(type, list); },
             async emit(type, ...args) { for (const fn of [...(listeners.get(type) ?? [])]) await fn(...args); },
         },
-        updateMessageBlock(id) { updated.push(id); },
+        updateMessageBlock(id, message) {
+            // The real host accesses getAttribute on the message's DOM node.
+            if (!rendered.has(id)) throw new TypeError("Cannot read properties of undefined (reading 'getAttribute')");
+            assert.equal(message, this.chat[id]);
+            updated.push(id);
+        },
         async saveChat() { saved.push(JSON.stringify(this.chat)); },
     };
-    return { ctx, input, settings, saved, updated,
-        install: () => installSendHooks(() => ctx, () => {}, () => input),
+    return { ctx, input, settings, saved, updated, rendered,
+        install: () => installSendHooks(() => ctx, () => {}, () => input, id => rendered.has(id)),
         before: (type = 'normal', params = {}, dryRun = false) => ctx.eventSource.emit('before', type, params, dryRun),
         async commit(text = input.value) {
             input.value = '';
             const id = ctx.chat.push(user(text)) - 1;
             await ctx.eventSource.emit('sent', id);
+            rendered.add(id);
             return ctx.chat[id];
         },
     };
 }
+
+test('new messages are saved before the host creates their DOM nodes', async t => {
+    const h = host();
+    const errors = t.mock.method(console, 'error', () => {});
+    await h.install();
+    await h.before();
+    const message = await h.commit();
+    assert.equal(errors.mock.callCount(), 0);
+    assert.deepEqual(h.updated, []);
+    assert.equal(h.saved.length, 1);
+    assert.ok(JSON.parse(h.saved[0])[0].extra[SETTINGS_KEY]);
+    assert.ok(message.mes.includes('随机指令'));
+});
 
 test('recall reads all independently rolled commands before building its result, without a second roll on save', async t => {
     const h = host();
@@ -148,6 +168,7 @@ test('history cleanup waits for an actual new message and preserves recall text'
     const h = host();
     const old = user('旧用户输入');
     h.ctx.chat.push(old);
+    h.rendered.add(0);
     processMessage(h.ctx.chat, 0, h.settings, () => 0);
     old.mes += '\n<recall>旧召回</recall>';
     const before = old.mes;
@@ -156,7 +177,21 @@ test('history cleanup waits for an actual new message and preserves recall text'
     assert.equal(old.mes, before);
     await h.commit();
     assert.equal(old.mes, '旧用户输入\n<recall>旧召回</recall>');
-    assert.deepEqual(h.updated, [0, 1]);
+    assert.deepEqual(h.updated, [0]);
+});
+
+test('unrendered history is cleaned and saved without refreshing absent DOM nodes', async t => {
+    const h = host();
+    const errors = t.mock.method(console, 'error', () => {});
+    h.ctx.chat.push(user('较早的用户输入'));
+    processMessage(h.ctx.chat, 0, h.settings, () => 0);
+    await h.install();
+    await h.before();
+    await h.commit();
+    assert.equal(errors.mock.callCount(), 0);
+    assert.deepEqual(h.updated, []);
+    assert.equal(h.ctx.chat[0].mes, '较早的用户输入');
+    assert.equal(JSON.parse(h.saved[0])[0].mes, '较早的用户输入');
 });
 
 test('chat loading removes tracked old ARI wrappers and saves the migrated metadata once', async () => {

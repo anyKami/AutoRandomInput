@@ -1,6 +1,7 @@
 import { SETTINGS_KEY, createRollRecord, processMessage, removeLegacyMarkers } from './core.js';
 
-export async function installSendHooks(getContext, onChange, getInput = () => document.getElementById('send_textarea')) {
+export async function installSendHooks(getContext, onChange, getInput = () => document.getElementById('send_textarea'),
+    isRendered = id => !!document.querySelector(`#chat .mes[mesid="${id}"]`)) {
     let pending;
     const ctx = getContext();
     const safely = handler => async (...args) => {
@@ -10,8 +11,11 @@ export async function installSendHooks(getContext, onChange, getInput = () => do
             globalThis.toastr?.error('随机指令处理或保存失败，请检查当前消息。', '随机指令');
         }
     };
-    const refresh = async (current, ids) => {
-        for (const id of ids) current.updateMessageBlock(id, current.chat[id]);
+    const refresh = async (current, ids, newMessageId = -1) => {
+        // MESSAGE_SENT precedes addOneMessage. Older messages may also be outside the rendered page.
+        for (const id of ids) {
+            if (id !== newMessageId && isRendered(id)) current.updateMessageBlock(id, current.chat[id]);
+        }
         onChange();
         if (ids.length) await current.saveChat();
     };
@@ -36,7 +40,7 @@ export async function installSendHooks(getContext, onChange, getInput = () => do
             message?.is_user && !message.is_system ? pending.record : null;
         if (prepared) pending = null;
         const outcome = processMessage(current.chat, messageId, current.extensionSettings[SETTINGS_KEY], Math.random, prepared);
-        if (outcome) await refresh(current, outcome.changedIds);
+        if (outcome) await refresh(current, outcome.changedIds, messageId);
     };
     const onChatChanged = async () => {
         pending = null;

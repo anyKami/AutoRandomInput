@@ -45,7 +45,10 @@ const ctx = {
     },
     saveSettingsDebounced() { localStorage.setItem(key, JSON.stringify(ctx.extensionSettings[SETTINGS_KEY])); },
     async saveChat() { document.getElementById('save-count').textContent = `聊天保存 ${++saves} 次`; },
-    updateMessageBlock(id) { renderMessage(id); },
+    updateMessageBlock(id) {
+        if (!document.querySelector(`#chat .mes[mesid="${id}"]`)) throw new Error('消息节点尚未渲染');
+        renderMessage(id);
+    },
     messageFormatter: { stage: { BEFORE_REGEX: 'beforeRegex' }, addHook(fn) { hooks.push(fn); } },
 };
 globalThis.SillyTavern = { getContext: () => ctx };
@@ -57,7 +60,8 @@ function renderMessage(id) {
     if (!element) {
         element = document.createElement('article');
         element.id = `preview-message-${id}`;
-        element.className = 'preview-message';
+        element.className = 'preview-message mes';
+        element.setAttribute('mesid', String(id));
         element.innerHTML = '<div class="preview-rendered"></div><details><summary>实际发送内容（原始消息）</summary><pre></pre></details>';
         document.getElementById('preview-chat').append(element);
     }
