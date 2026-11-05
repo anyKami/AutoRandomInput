@@ -1,33 +1,54 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { SETTINGS_KEY, activeGroup, createGroup, createRule, createSampleGroup, displayMessage, normalizeSettings, processMessage, removeLegacyMarkers, rollDice } from '../core.js';
+import { DICE_SIDES, SETTINGS_KEY, activeGroup, createGroup, createRule, createSampleGroup, displayMessage, normalizeSettings, processMessage, removeLegacyMarkers, rollDice } from '../core.js';
 
 const firstRule = settings => activeGroup(settings).rules[0];
 const user = mes => ({ is_user: true, is_system: false, mes, extra: {} });
 function configured() {
     const settings = normalizeSettings();
     settings.enabled = true;
-    firstRule(settings).commands = Array.from({ length: 10 }, (_, index) => `命令内容 ${index + 1}`);
+    firstRule(settings).commands = Array.from({ length: 20 }, (_, index) => `命令内容 ${index + 1}`);
     return settings;
 }
 
-test('fresh settings are disabled, visible, with ten blank slots and d10', () => {
+test('fresh settings are disabled, visible, with twenty blank slots and d10', () => {
     const settings = normalizeSettings();
     assert.equal(settings.enabled, false);
     assert.equal(settings.stealthMode, false);
     assert.equal(firstRule(settings).diceSides, 10);
-    assert.deepEqual(firstRule(settings).commands, Array(10).fill(''));
+    assert.deepEqual(firstRule(settings).commands, Array(20).fill(''));
 });
 
-test('each d1–d10 maps equal intervals to the corresponding slots, including boundaries', () => {
-    for (let sides = 1; sides <= 10; sides++) {
+test('each d1–d10 and d20 maps equal intervals to the corresponding slots, including boundaries', () => {
+    for (const sides of DICE_SIDES) {
         assert.equal(rollDice(sides, () => 0), 1);
         assert.equal(rollDice(sides, () => 1 - Number.EPSILON), sides);
         const counts = Array(sides).fill(0);
         for (let i = 0; i < sides * 100; i++) counts[rollDice(sides, () => (i + 0.5) / (sides * 100)) - 1]++;
         assert.deepEqual(counts, Array(sides).fill(100));
     }
-    for (const sides of [0, -1, 11, 1.2, NaN, '6']) assert.throws(() => rollDice(sides), RangeError);
+    for (const sides of [0, -1, 11, 19, 21, 1.2, NaN, '6', '20']) assert.throws(() => rollDice(sides), RangeError);
+});
+
+test('d20 retains all commands through saving, reducing the die size, reloading and copying', () => {
+    let settings = configured();
+    firstRule(settings).diceSides = 20;
+    firstRule(settings).commands = Array.from({ length: 20 }, (_, index) => `d20 命令 ${index + 1}`);
+    settings = normalizeSettings(JSON.parse(JSON.stringify(settings)));
+    assert.equal(firstRule(settings).diceSides, 20);
+    firstRule(settings).diceSides = 6;
+    settings = normalizeSettings(JSON.parse(JSON.stringify(settings)));
+    const copied = createGroup('d20 副本', activeGroup(settings));
+    firstRule(settings).diceSides = 20;
+    settings.includeRollResult = true;
+    const chat = [user('用户消息')];
+    const outcome = processMessage(chat, 0, settings, () => 1 - Number.EPSILON);
+    assert.equal(outcome.record.rolls[0].sides, 20);
+    assert.equal(outcome.record.rolls[0].result, 20);
+    assert.ok(chat[0].mes.includes('d20 命令 20\n> （投掷结果：d20 = 20）'));
+    firstRule(settings).commands[19] = '修改原组';
+    assert.equal(copied.rules[0].commands[19], 'd20 命令 20');
+    assert.equal(copied.rules[0].diceSides, 6);
 });
 
 test('d10 → d6 → reload → d10 retains hidden commands; copies are independent', () => {
@@ -230,6 +251,7 @@ test('legacy groups migrate into one rule with all ten commands preserved', () =
     assert.equal(activeGroup(settings).rules.length, 1);
     assert.equal(firstRule(settings).diceSides, 6);
     assert.equal(firstRule(settings).commands[9], '旧命令 10');
+    assert.deepEqual(firstRule(settings).commands.slice(10), Array(10).fill(''));
     assert.equal(settings.includeRollResult, false);
     assert.equal(settings.theme, 'navy');
 });
@@ -264,7 +286,7 @@ test('the sample group contains four independent, fully filled dice with fourtee
     assert.equal(group.name, '通用剧情样板');
     assert.deepEqual(group.rules.map(rule => rule.diceSides), [1, 6, 4, 3]);
     assert.equal(group.rules.reduce((count, rule) => count + rule.commands.filter(text => text.trim()).length, 0), 14);
-    assert.ok(group.rules.every(rule => rule.enabled && rule.commands.length === 10 && rule.commands.slice(0, rule.diceSides).every(text => text.trim())));
+    assert.ok(group.rules.every(rule => rule.enabled && rule.commands.length === 20 && rule.commands.slice(0, rule.diceSides).every(text => text.trim())));
     const another = createSampleGroup();
     group.rules[0].commands[0] = '修改样板';
     assert.notEqual(group.id, another.id);

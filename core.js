@@ -1,5 +1,7 @@
 export const SETTINGS_KEY = 'auto_random_input';
 export const THEMES = { navy: '深海蓝', graphite: '石墨黑', forest: '森林绿', plum: '暮紫', paper: '暖白' };
+export const DICE_SIDES = [...Array.from({ length: 10 }, (_, index) => index + 1), 20];
+export const MAX_COMMANDS = 20;
 
 // These are local identifiers, not security tokens; allow ordinary HTTP deployments too.
 function newId() {
@@ -12,7 +14,7 @@ export function createRule(name, source) {
         name,
         enabled: source?.enabled !== false,
         diceSides: source?.diceSides ?? 10,
-        commands: Array.from({ length: 10 }, (_, index) => source?.commands?.[index] ?? ''),
+        commands: Array.from({ length: MAX_COMMANDS }, (_, index) => source?.commands?.[index] ?? ''),
     };
 }
 
@@ -66,8 +68,8 @@ export function normalizeSettings(value = {}) {
                 id: typeof rule?.id === 'string' && rule !== group ? rule.id : newId(),
                 name: typeof rule?.name === 'string' && rule !== group && rule.name.trim() ? rule.name : `骰子指令 ${index + 1}`,
                 enabled: rule?.enabled !== false,
-                diceSides: Number.isInteger(rule?.diceSides) && rule.diceSides >= 1 && rule.diceSides <= 10 ? rule.diceSides : 10,
-                commands: Array.from({ length: 10 }, (_, slot) => typeof rule?.commands?.[slot] === 'string' ? rule.commands[slot] : ''),
+                diceSides: DICE_SIDES.includes(rule?.diceSides) ? rule.diceSides : 10,
+                commands: Array.from({ length: MAX_COMMANDS }, (_, slot) => typeof rule?.commands?.[slot] === 'string' ? rule.commands[slot] : ''),
             })),
         }));
     if (!groups.length) groups.push(createGroup('默认配置'));
@@ -96,7 +98,7 @@ export function uniqueName(items, base) {
 }
 
 export function rollDice(sides, random = Math.random) {
-    if (!Number.isInteger(sides) || sides < 1 || sides > 10) throw new RangeError('骰子面数必须为 1–10');
+    if (!DICE_SIDES.includes(sides)) throw new RangeError('骰子面数必须为 1–10 或 20');
     return Math.floor(random() * sides) + 1;
 }
 

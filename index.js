@@ -1,4 +1,4 @@
-import { SETTINGS_KEY, THEMES, activeGroup, createGroup, createRule, createSampleGroup, displayMessage, normalizeSettings, uniqueGroupName, uniqueName } from './core.js';
+import { DICE_SIDES, SETTINGS_KEY, THEMES, activeGroup, createGroup, createRule, createSampleGroup, displayMessage, normalizeSettings, uniqueGroupName, uniqueName } from './core.js';
 import { installSendHooks } from './send.js';
 
 const context = () => SillyTavern.getContext();
@@ -101,7 +101,7 @@ function renderCommands() {
     $('#ari-probability').textContent = `${Number((100 / rule.diceSides).toFixed(2))}%`;
     const grid = $('#ari-command-grid');
     grid.replaceChildren();
-    // Only render active slots. Every rule retains its own full ten-slot array.
+    // Only render active slots; keep hidden commands when switching die sizes.
     rule.commands.slice(0, rule.diceSides).forEach((text, index) => {
         const card = document.createElement('article');
         card.className = 'ari-command-card';
@@ -123,8 +123,8 @@ function renderCommands() {
         grid.append(card);
     });
     const hint = $('#ari-hidden-hint');
-    hint.hidden = rule.diceSides === 10;
-    hint.textContent = `第 ${rule.diceSides === 9 ? '10' : `${rule.diceSides + 1}–10`} 条已收起，内容仍保留。调大骰子面数即可恢复。`;
+    hint.hidden = rule.diceSides === rule.commands.length;
+    hint.textContent = hint.hidden ? '' : `第 ${rule.diceSides + 1}–${rule.commands.length} 条已收起，内容仍保留。调大骰子面数即可恢复。`;
     renderCounter();
     renderLastRoll();
 }
@@ -196,7 +196,7 @@ function submitGroup(event) {
 }
 
 function bindUI() {
-    for (let sides = 1; sides <= 10; sides++) $('#ari-sides').append(new Option(`d${sides}`, String(sides)));
+    for (const sides of DICE_SIDES) $('#ari-sides').append(new Option(`d${sides}`, String(sides)));
     for (const [id, name] of Object.entries(THEMES)) $('#ari-theme').append(new Option(name, id));
     $('#ari-close').addEventListener('click', () => dialog.close());
     dialog.addEventListener('click', event => {
