@@ -278,12 +278,19 @@ async function init() {
     dialog = document.getElementById('ari-workbench');
     bindUI();
     render();
-    const button = document.createElement('button');
+    const button = document.createElement('div');
     button.id = 'ari-menu-button';
-    button.type = 'button';
+    button.setAttribute('role', 'button');
+    button.tabIndex = 0;
     button.className = 'list-group-item flex-container flexGap5 interactable';
     button.innerHTML = '<i class="fa-solid fa-dice-d6" aria-hidden="true"></i><span>随机指令</span>';
     button.addEventListener('click', () => { closeGroupForm(); render(); if (!dialog.open) dialog.showModal(); });
+    button.addEventListener('keydown', event => {
+        if (event.key !== 'Enter' && event.key !== ' ') return;
+        event.preventDefault();
+        event.stopPropagation();
+        button.click();
+    });
     const menu = document.getElementById('extensionsMenu') ?? document.getElementById('extensions_settings2');
     if (menu) menu.append(button);
     else console.error('[AutoRandomInput] 未找到扩展菜单入口');
