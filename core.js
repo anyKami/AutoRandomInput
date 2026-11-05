@@ -27,6 +27,11 @@ export function createGroup(name, source) {
 export function createSampleGroup() {
     const group = createGroup('通用剧情样板');
     group.rules = [
+        createRule('自动肘击', { diceSides: 1, commands: [[
+            '（仅针对 <content></content> 标签内的内容生效：请生成2500字以上的长文。要求合并细碎段落，保持长短段错落有致，全文中“只有一句话的段落”上限为5个。）',
+            '（必须在末尾输出最新 MVU。严禁复制旧数据或仅做简单更改！强行遍历所有规则清单，根据当前最新互动，对每一个变量进行深度重算。）',
+            '（拒绝性格极端化！设定仅为“偏向”而非“绝对”。强制展现人物灰度，在合理情境中自然流露性格的模糊地带与细腻侧面。禁止生硬反转，打破非黑即白，深挖复杂人性的真实底色。）',
+        ].join('\n')] }),
         createRule('进展判定', { diceSides: 6, commands: [
             '让当前行动遭遇失败，未能达成预期目标，失败原因应符合已有情境。',
             '让当前行动遇到意料之外的阻力，需要克服新的障碍才能继续推进。',

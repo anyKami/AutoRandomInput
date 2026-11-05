@@ -259,11 +259,11 @@ test('themes and result preference persist independently of the active group', (
     assert.equal(normalizeSettings({ ...settings, theme: 'invalid' }).theme, 'navy');
 });
 
-test('the sample group contains three independent, fully filled dice with thirteen outcomes', () => {
+test('the sample group contains four independent, fully filled dice with fourteen outcomes', () => {
     const group = createSampleGroup();
     assert.equal(group.name, '通用剧情样板');
-    assert.deepEqual(group.rules.map(rule => rule.diceSides), [6, 4, 3]);
-    assert.equal(group.rules.reduce((count, rule) => count + rule.commands.filter(text => text.trim()).length, 0), 13);
+    assert.deepEqual(group.rules.map(rule => rule.diceSides), [1, 6, 4, 3]);
+    assert.equal(group.rules.reduce((count, rule) => count + rule.commands.filter(text => text.trim()).length, 0), 14);
     assert.ok(group.rules.every(rule => rule.enabled && rule.commands.length === 10 && rule.commands.slice(0, rule.diceSides).every(text => text.trim())));
     const another = createSampleGroup();
     group.rules[0].commands[0] = '修改样板';
