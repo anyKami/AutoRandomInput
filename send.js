@@ -48,11 +48,12 @@ export async function installSendHooks(getContext, onChange, getInput = () => do
         if ((!settings.enabled && !skills?.enabled()) || !input?.value.trim()) return;
         // A cancelled send or the group's inner generation may reuse this same draft.
         if (pending?.chat === current.chat && pending.messageId === current.chat.length &&
+            pending.skillRevision === skills?.revision?.() &&
             input.value.includes(pending.record.block || pending.text)) return;
         discardDraft();
         if (!input.value.trim()) return;
         const record = makeRecord(current, current.chat.length);
-        pending = { chat: current.chat, messageId: current.chat.length, record, text: input.value + record.block };
+        pending = { chat: current.chat, messageId: current.chat.length, skillRevision: skills?.revision?.(), record, text: input.value + record.block };
         input.value = pending.text;
         input.dispatchEvent(new Event('input', { bubbles: true }));
     };

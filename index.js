@@ -2,6 +2,7 @@ import { DICE_SIDES, SETTINGS_KEY, THEMES, activeGroup, createGroup, createRule,
 import { installSendHooks } from './send.js';
 import { installSkillService } from './mvu-skills.js';
 import { mountSkillUI } from './skill-ui.js';
+import { SKILL_GROUPS_KEY, normalizeSkillGroups } from './skill-groups.js';
 
 const context = () => SillyTavern.getContext();
 const settings = () => context().extensionSettings[SETTINGS_KEY];
@@ -270,6 +271,7 @@ async function init() {
     initialized = true;
     const ctx = context();
     ctx.extensionSettings[SETTINGS_KEY] = normalizeSettings(ctx.extensionSettings[SETTINGS_KEY]);
+    ctx.extensionSettings[SKILL_GROUPS_KEY] = normalizeSkillGroups(ctx.extensionSettings[SKILL_GROUPS_KEY]);
     save();
     skillService = installSkillService(context, () => skillUI?.refresh());
     await installSendHooks(context, () => { renderLastRoll(); skillUI?.refresh(); }, undefined, undefined, skillService);

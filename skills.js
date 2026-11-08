@@ -10,9 +10,14 @@ export function unwrap(value) {
     return Array.isArray(value) && (value.length === 1 || value.length === 2 && typeof value[1] === 'string') ? unwrap(value[0]) : value;
 }
 
+export const defaultSkillValue = sides => Math.floor(sides * 2 / 3);
+export const recommendedPointLimit = settings => Math.floor(settings.skills.length * settings.diceSides * 2 / 3);
+export const skillPointTotal = settings => settings.skills.reduce((sum, skill) => sum + (Number.isSafeInteger(skill.value) && skill.value >= 0 ? skill.value : 0), 0);
+
 export function normalizeSkillSettings(value = {}) {
-    return {
+    const config = {
         version: 1,
+        groupId: typeof value?.groupId === 'string' ? value.groupId : '',
         enabled: value?.enabled === true,
         diceSides: SKILL_DICE.includes(value?.diceSides) ? value.diceSides : 20,
         mode: value?.mode === 'every' ? 'every' : 'challenge',
@@ -23,6 +28,10 @@ export function normalizeSkillSettings(value = {}) {
             value: skill.value ?? null,
         })),
     };
+    // Migrating an existing sheet must not invalidate its scores or silently reduce them.
+    config.pointLimit = Object.hasOwn(value ?? {}, 'pointLimit') ? value.pointLimit
+        : Math.max(recommendedPointLimit(config), skillPointTotal(config));
+    return config;
 }
 
 export function skillErrors(settings) {
@@ -38,7 +47,27 @@ export function skillErrors(settings) {
             errors.push(`“${name || `技能 ${index + 1}`}”的技能值须为 0～${settings.diceSides} 的整数。`);
         }
     }
+    if (!Number.isSafeInteger(settings.pointLimit) || settings.pointLimit < 0) errors.push('总能力值上限须为非负整数。');
+    else if (skillPointTotal(settings) > settings.pointLimit) errors.push(`技能值合计 ${skillPointTotal(settings)} 超过总能力值上限 ${settings.pointLimit}，请调整或随机分配。`);
     return errors;
+}
+
+export function randomizeSkillValues(settings, random = Math.random) {
+    if (!SKILL_DICE.includes(settings.diceSides) || !Number.isSafeInteger(settings.pointLimit) || settings.pointLimit < 0) {
+        throw new RangeError('请先填写有效骰型及非负整数的总能力值上限。');
+    }
+    const skills = settings.skills.map(skill => ({ ...skill, value: 0 }));
+    const eligible = skills.map((_, index) => index);
+    const points = Math.min(settings.pointLimit, skills.length * settings.diceSides);
+    // Each point goes to a randomly selected skill that still has capacity.
+    for (let remaining = points; remaining > 0; remaining--) {
+        const sample = random();
+        if (!(sample >= 0 && sample < 1)) throw new RangeError('随机源须返回 0（含）至 1（不含）之间的值。');
+        const slot = Math.floor(sample * eligible.length);
+        const skill = skills[eligible[slot]];
+        if (++skill.value === settings.diceSides) eligible.splice(slot, 1);
+    }
+    return skills;
 }
 
 // Ignore only MVU's generated placeholders, so editing an actual reply invalidates its selection.

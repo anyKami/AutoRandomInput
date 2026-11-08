@@ -4,6 +4,7 @@ import { installSkillService } from '../mvu-skills.js';
 import { SKILL_SETTINGS_KEY, normalizeSkillSettings } from '../skills.js';
 import { SETTINGS_KEY, normalizeSettings } from '../core.js';
 import { installSendHooks } from '../send.js';
+import { createSkillGroup, loadSkillGroup } from '../skill-groups.js';
 
 function fixture() {
     const listeners = new Map();
@@ -96,6 +97,37 @@ test('chat switch during MVU update cannot write the old frame to a different ch
     h.ctx.chat = [];
     await h.ctx.eventSource.emit('mag_before_message_update', { variables });
     assert.equal(variables.stat_data.随机指令工作台, undefined);
+});
+
+test('loading another skill group discards cancelled draft results from the old sheet', async t => {
+    const h = fixture(); await h.install();
+    await h.ctx.eventSource.emit('before', 'normal'); await h.commit();
+    const { variables } = await h.parse(h.reply());
+    await h.ctx.eventSource.emit('mag_before_message_update', { variables }); h.data.set(1, variables);
+    const random = t.mock.method(Math, 'random', () => 0.5);
+    h.input.value = '尝试行动';
+    await h.ctx.eventSource.emit('before', 'normal');
+    assert.equal(random.mock.callCount(), 2);
+    const old = h.ctx.chatMetadata[SKILL_SETTINGS_KEY];
+    h.ctx.chatMetadata[SKILL_SETTINGS_KEY] = loadSkillGroup(old, createSkillGroup('新技能表', old));
+    h.service.resetSheet();
+    await h.ctx.eventSource.emit('before', 'normal');
+    const message = await h.commit();
+    assert.equal(message.extra[SETTINGS_KEY].skills.results.length, 0);
+    assert.equal(random.mock.callCount(), 2);
+    assert.equal(message.mes.split('[随机指令工作台 2.0').length, 2);
+});
+
+test('an overspent point budget does not inject a skill request or roll dice', async t => {
+    const h = fixture(); await h.install();
+    h.ctx.chatMetadata[SKILL_SETTINGS_KEY].pointLimit = 0;
+    const random = t.mock.method(Math, 'random', () => { throw new Error('must not roll'); });
+    await h.ctx.eventSource.emit('before', 'normal');
+    const message = await h.commit();
+    assert.equal(message.mes, '查看门锁');
+    assert.equal(message.extra[SETTINGS_KEY].skills, undefined);
+    assert.match(h.service.view().errors.join(), /超过总能力值上限/);
+    assert.equal(random.mock.callCount(), 0);
 });
 
 test('JSON Patch is accepted; absent, malicious or partial commands do not produce dice', async () => {

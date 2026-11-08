@@ -1,7 +1,7 @@
 {
   "display_name": "随机指令",
-  "description": "随机指令工作台 2.0：多套随机指令与 MVU 通用技能检定，支持每聊天技能表及多项独立检定。",
-  "version": "2.0.0",
+  "description": "随机指令工作台 2.1：MVU 通用技能检定、可复用技能配置组与 5e、日常、修仙等 12 套技能样板。",
+  "version": "2.1.0",
   "author": "anyKami",
   "homepage": "https://github.com/anyKami/AutoRandomInput",
   "loading_order": 30,

@@ -5,7 +5,7 @@
         <path d="M20 2 38 13v18L20 42 2 31V13L20 2Z M2 13l18 10 18-10 M20 23v19 M20 2v21" />
         <circle cx="20" cy="23" r="3" />
       </svg>
-      <div><span class="ari-eyebrow">AUTO RANDOM INPUT</span><h2 id="ari-title">随机指令工作台 2.0</h2></div>
+      <div><span class="ari-eyebrow">AUTO RANDOM INPUT</span><h2 id="ari-title">随机指令工作台 2.1</h2></div>
     </div>
     <div class="ari-header-actions">
       <select id="ari-theme" aria-label="界面主题" title="界面背景主题"></select>
@@ -74,6 +74,36 @@
 
   <div id="ari-skills-panel" class="ari-layout" role="tabpanel" aria-labelledby="ari-tab-skills" hidden>
     <aside class="ari-sidebar">
+      <section class="ari-group-section">
+        <label class="ari-section-label" for="ari-skill-group">技能配置组 <span id="ari-skill-group-count"></span></label>
+        <select id="ari-skill-group" aria-label="技能配置组"></select>
+        <div class="ari-group-actions">
+          <button type="button" data-skill-group-action="new">＋ 新建</button>
+          <button type="button" data-skill-group-action="copy">另存为</button>
+          <button id="ari-rename-skill-group" type="button" data-skill-group-action="rename">重命名</button>
+          <button id="ari-delete-skill-group" type="button" data-skill-group-action="delete">删除</button>
+        </div>
+        <div class="ari-group-actions">
+          <button id="ari-save-skill-group" type="button">保存到组</button>
+          <button id="ari-load-skill-group" type="button">重新载入</button>
+        </div>
+        <label class="ari-section-label" for="ari-skill-template">技能样板</label>
+        <select id="ari-skill-template" aria-label="技能样板"></select>
+        <div class="ari-group-actions">
+          <button id="ari-add-skill-template" type="button">添加选中样板</button>
+          <button id="ari-add-all-skill-templates" type="button">添加全部样板</button>
+        </div>
+        <p id="ari-skill-template-note" class="ari-skill-note"></p>
+        <p id="ari-skill-group-status" class="ari-skill-note" role="status"></p>
+        <p class="ari-skill-note">配置组可跨聊天复用。编辑只自动保存当前聊天，点击「保存到组」更新模板。切换或重新载入会替换当前技能表。</p>
+        <p class="ari-skill-note">样板默认 d20，每项初值 13；总上限为全部单项上限的 2/3。可自由增删修改。</p>
+        <form id="ari-skill-group-form" class="ari-skill-group-form" hidden>
+          <label id="ari-skill-group-form-label" for="ari-skill-group-name">技能配置组名称</label>
+          <input id="ari-skill-group-name" type="text" maxlength="60" autocomplete="off">
+          <p id="ari-skill-group-error" class="ari-skill-errors" role="alert"></p>
+          <div class="ari-form-actions"><button id="ari-skill-group-cancel" type="button">取消</button><button id="ari-skill-group-confirm" class="ari-primary" type="submit">确定</button></div>
+        </form>
+      </section>
       <label class="ari-toggle"><input id="ari-skills-enabled" type="checkbox"><span class="ari-switch"></span><span id="ari-skills-enabled-label">技能检定已关闭</span></label>
       <p id="ari-skills-status" class="ari-skill-note" role="status"></p>
       <div class="ari-skill-options">
@@ -87,6 +117,11 @@
     <section class="ari-editor" aria-labelledby="ari-skills-title">
       <div class="ari-editor-heading"><div><span class="ari-eyebrow">PROTAGONIST SKILLS</span><h3 id="ari-skills-title">主角技能</h3></div><span class="ari-save-status"><span></span>当前聊天自动保存</span></div>
       <p id="ari-skill-range" class="ari-skill-note"></p>
+      <label class="ari-section-label" for="ari-skill-point-limit">总能力值上限</label>
+      <div class="ari-point-controls"><input id="ari-skill-point-limit" type="number" min="0" step="1" aria-label="总能力值上限"><button id="ari-use-point-suggestion" type="button">采用推荐值</button><button id="ari-randomize-skills" type="button">随机分配技能值</button></div>
+      <p id="ari-skill-point-total" class="ari-skill-note" role="status"></p>
+      <p id="ari-skill-point-suggestion" class="ari-skill-note"></p>
+      <p class="ari-skill-note">随机分配尽量用满总点数；每项不超过骰面数。总上限高于「技能数 × 骰面数」时，用不完的点数会保留。</p>
       <div class="ari-skill-row ari-skill-table-heading"><span>技能名称</span><span>技能值</span><span></span></div>
       <div id="ari-skills-grid"></div>
       <p id="ari-skills-empty" class="ari-skill-note">添加主角拥有的技能，让 AI 按剧情选择下一轮需要检定的项目。</p>

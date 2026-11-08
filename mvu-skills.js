@@ -39,6 +39,7 @@ function writePacket(variables, packet) {
 export function installSkillService(getContext, onChange = () => {}, host = globalThis) {
     const frames = new WeakMap();
     let lastError = '';
+    let sheetRevision = 0;
     const settings = () => normalizeSkillSettings(getContext().chatMetadata?.[SKILL_SETTINGS_KEY]);
     const view = (beforeId = getContext().chat.length) => {
         const ctx = getContext();
@@ -127,6 +128,8 @@ export function installSkillService(getContext, onChange = () => {}, host = glob
     events.on('mag_command_parsed', parsed);
     events.on('mag_before_message_update', beforeWrite);
     return { settings, view, prepare, restore,
+        revision: () => sheetRevision,
+        resetSheet: () => { sheetRevision++; onChange(); },
         enabled: () => settings().enabled,
         reset: () => { lastError = ''; onChange(); },
     };

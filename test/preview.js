@@ -1,4 +1,5 @@
 import { SETTINGS_KEY, THEMES, activeGroup, createGroup, createRule, normalizeSettings } from '../core.js';
+import { SKILL_GROUPS_KEY } from '../skill-groups.js';
 
 const key = 'ari-isolated-preview-v2';
 const initial = normalizeSettings(JSON.parse(localStorage.getItem(key) ?? 'null'));
@@ -35,15 +36,24 @@ if (!localStorage.getItem(key)) {
 const listeners = new Map();
 const hooks = [];
 let saves = 0;
+const skillPreview = new URLSearchParams(location.search).has('skills');
+let previewChat = 1;
+const loadMetadata = id => JSON.parse(localStorage.getItem(`${key}:chat-${id}`) ?? '{}');
+const skillChat = () => [{ is_user: false, is_system: false, mes: `技能配置组测试聊天 ${previewChat}，不连接模型。`, extra: {} }];
 const ctx = {
-    extensionSettings: { [SETTINGS_KEY]: initial }, chat: [],
+    extensionSettings: { [SETTINGS_KEY]: initial, [SKILL_GROUPS_KEY]: JSON.parse(localStorage.getItem(`${key}:skill-groups`) ?? 'null') },
+    chat: skillPreview ? skillChat() : [], chatMetadata: loadMetadata(previewChat),
     eventTypes: { APP_READY: 'ready', MESSAGE_SENT: 'sent', CHAT_CHANGED: 'chat', GENERATION_STARTED: 'generation', GENERATION_AFTER_COMMANDS: 'before' },
     eventSource: {
         on(type, fn) { const list = listeners.get(type) ?? []; list.push(fn); listeners.set(type, list); },
         makeFirst(type, fn) { const list = listeners.get(type) ?? []; list.unshift(fn); listeners.set(type, list); },
         async emit(type, ...args) { for (const fn of listeners.get(type) ?? []) await fn(...args); },
     },
-    saveSettingsDebounced() { localStorage.setItem(key, JSON.stringify(ctx.extensionSettings[SETTINGS_KEY])); },
+    saveSettingsDebounced() {
+        localStorage.setItem(key, JSON.stringify(ctx.extensionSettings[SETTINGS_KEY]));
+        localStorage.setItem(`${key}:skill-groups`, JSON.stringify(ctx.extensionSettings[SKILL_GROUPS_KEY] ?? { groups: [] }));
+    },
+    saveMetadataDebounced() { localStorage.setItem(`${key}:chat-${previewChat}`, JSON.stringify(ctx.chatMetadata)); },
     async saveChat() { document.getElementById('save-count').textContent = `聊天保存 ${++saves} 次`; },
     updateMessageBlock(id) {
         if (!document.querySelector(`#chat .mes[mesid="${id}"]`)) throw new Error('消息节点尚未渲染');
@@ -96,9 +106,18 @@ document.getElementById('send_textarea').addEventListener('keydown', event => {
     if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) { event.preventDefault(); send(); }
 });
 document.getElementById('preview-regenerate').addEventListener('click', () => ctx.eventSource.emit('generation', 'regenerate'));
+document.getElementById('preview-switch-chat').hidden = !skillPreview;
+document.getElementById('preview-switch-chat').addEventListener('click', async () => {
+    ctx.saveMetadataDebounced(); previewChat = previewChat === 1 ? 2 : 1;
+    ctx.chatMetadata = loadMetadata(previewChat); ctx.chat = skillChat();
+    document.getElementById('preview-chat').replaceChildren();
+    ctx.chat.forEach((_, id) => renderMessage(id));
+    await ctx.eventSource.emit('chat');
+});
 
 await import('../index.js');
 await ctx.eventSource.emit('ready');
+ctx.chat.forEach((_, id) => renderMessage(id));
 document.getElementById('ari-menu-button')?.click();
 
 document.getElementById('run-ui-tests').addEventListener('click', async () => {
