@@ -3,6 +3,9 @@ import { installSendHooks } from './send.js';
 import { installSkillService } from './mvu-skills.js';
 import { mountSkillUI } from './skill-ui.js';
 import { SKILL_GROUPS_KEY, normalizeSkillGroups } from './skill-groups.js';
+import { createUpdateReloader, flushBeforeReload } from './update-reload.js';
+
+const VERSION = '2.1.2';
 
 const context = () => SillyTavern.getContext();
 const settings = () => context().extensionSettings[SETTINGS_KEY];
@@ -13,6 +16,34 @@ let groupAction = '';
 let selectedRuleId = '';
 let skillService;
 let skillUI;
+let appReady = false;
+let hostModule;
+const loadHost = () => hostModule ??= import('../../../../script.js');
+const updateReloader = createUpdateReloader({
+    version: VERSION,
+    storage: (() => { try { return window.sessionStorage; } catch { return undefined; } })(),
+    readVersion: async () => {
+        const response = await fetch(new URL('./manifest.json', import.meta.url), { cache: 'no-store' });
+        if (!response.ok) throw new Error(`读取版本失败：HTTP ${response.status}`);
+        return (await response.json()).version;
+    },
+    isBusy: async () => {
+        if (!appReady) return true;
+        const host = await loadHost();
+        return (host.isGenerating?.() ?? (host.is_send_press || host.is_group_generating)) || host.isChatSaving ||
+            !!document.getElementById('send_textarea')?.value ||
+            !!document.querySelector('#ari-workbench[open],#curEditTextarea,.edit_textarea,.reasoning_edit_textarea') ||
+            !!document.activeElement?.matches('input,textarea:not(#send_textarea),select,[contenteditable="true"]');
+    },
+    flush: async () => flushBeforeReload(context, await loadHost()),
+    reload: () => window.location.reload(),
+    notify: () => globalThis.toastr?.info('插件已升级，将在生成和保存完成、草稿清空及工作台关闭后自动刷新。', '随机指令'),
+    onError: error => console.debug('[AutoRandomInput] 自动刷新暂缓，稍后重试', error),
+});
+export function onAutoRandomInputUpdate() { updateReloader.request(); }
+window.addEventListener('focus', () => { if (appReady) void updateReloader.check(); });
+document.addEventListener('visibilitychange', () => { if (appReady && !document.hidden) void updateReloader.check(); });
+window.addEventListener('pagehide', () => updateReloader.dispose(), { once: true });
 const $ = selector => dialog.querySelector(selector);
 const selectedRule = () => {
     const group = activeGroup(settings());
@@ -310,7 +341,7 @@ async function init() {
 }
 
 context().eventSource.on(context().eventTypes.APP_READY, () =>
-    init().catch(error => {
+    init().then(() => { appReady = true; void updateReloader.check(); }).catch(error => {
         console.error('[AutoRandomInput] 初始化失败', error);
         globalThis.toastr?.error('随机指令界面加载失败，请刷新页面。', 'AutoRandomInput');
     }));
