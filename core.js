@@ -139,12 +139,12 @@ export function createRollRecord(settings, random = Math.random) {
         ...makeBlock(commands.join('\n\n'), settings.stealthMode) };
 }
 
-export function processMessage(chat, messageId, settings, random = Math.random, preparedRecord = null) {
+export function processMessage(chat, messageId, settings, random = Math.random, preparedRecord = null, recordFactory = null) {
     const message = chat[messageId];
-    if ((!settings.enabled && !preparedRecord) || !message?.is_user || message.is_system ||
+    if ((!settings.enabled && !preparedRecord && !recordFactory) || !message?.is_user || message.is_system ||
         typeof message.mes !== 'string' || !message.mes.trim() || message.extra?.[SETTINGS_KEY]) return null;
 
-    const record = preparedRecord ? { ...preparedRecord } : createRollRecord(settings, random);
+    const record = preparedRecord ? { ...preparedRecord } : recordFactory ? recordFactory() : createRollRecord(settings, random);
     // Prepared commands have already passed through recall and the host's input processing.
     // If another processor rewrote them, retain the roll without appending or claiming new text.
     if (preparedRecord && record.block && !message.mes.includes(record.block)) {

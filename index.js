@@ -1,5 +1,7 @@
 import { DICE_SIDES, SETTINGS_KEY, THEMES, activeGroup, createGroup, createRule, createSampleGroup, displayMessage, normalizeSettings, uniqueGroupName, uniqueName } from './core.js';
 import { installSendHooks } from './send.js';
+import { installSkillService } from './mvu-skills.js';
+import { mountSkillUI } from './skill-ui.js';
 
 const context = () => SillyTavern.getContext();
 const settings = () => context().extensionSettings[SETTINGS_KEY];
@@ -8,6 +10,8 @@ let dialog;
 let initialized = false;
 let groupAction = '';
 let selectedRuleId = '';
+let skillService;
+let skillUI;
 const $ = selector => dialog.querySelector(selector);
 const selectedRule = () => {
     const group = activeGroup(settings());
@@ -139,6 +143,7 @@ function render() {
     renderStatus();
     renderRules();
     renderCommands();
+    skillUI?.render();
 }
 
 function closeGroupForm() {
@@ -196,6 +201,25 @@ function submitGroup(event) {
 }
 
 function bindUI() {
+    const selectTab = name => {
+        for (const tab of ['random', 'skills']) {
+            const selected = tab === name;
+            $(`#ari-tab-${tab}`).setAttribute('aria-selected', String(selected));
+            $(`#ari-tab-${tab}`).tabIndex = selected ? 0 : -1;
+            $(`#ari-${tab}-panel`).hidden = !selected;
+        }
+        $('.ari-master').hidden = name === 'skills';
+        if (name === 'skills') skillUI?.render();
+    };
+    for (const name of ['random', 'skills']) {
+        $(`#ari-tab-${name}`).addEventListener('click', () => selectTab(name));
+        $(`#ari-tab-${name}`).addEventListener('keydown', event => {
+            if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+            event.preventDefault();
+            const next = event.key === 'Home' ? 'random' : event.key === 'End' ? 'skills' : name === 'random' ? 'skills' : 'random';
+            selectTab(next); $(`#ari-tab-${next}`).focus();
+        });
+    }
     for (const sides of DICE_SIDES) $('#ari-sides').append(new Option(`d${sides}`, String(sides)));
     for (const [id, name] of Object.entries(THEMES)) $('#ari-theme').append(new Option(name, id));
     $('#ari-close').addEventListener('click', () => dialog.close());
@@ -247,7 +271,8 @@ async function init() {
     const ctx = context();
     ctx.extensionSettings[SETTINGS_KEY] = normalizeSettings(ctx.extensionSettings[SETTINGS_KEY]);
     save();
-    await installSendHooks(context, renderLastRoll);
+    skillService = installSkillService(context, () => skillUI?.refresh());
+    await installSendHooks(context, () => { renderLastRoll(); skillUI?.refresh(); }, undefined, undefined, skillService);
     // On hosts with display hooks, hide before Markdown/HTML encoding; never modify the prompt here.
     if (ctx.messageFormatter?.addHook) {
         ctx.messageFormatter.addHook((text, meta) => meta.isUser
@@ -262,6 +287,7 @@ async function init() {
     document.body.append(template.content);
     dialog = document.getElementById('ari-workbench');
     bindUI();
+    skillUI = mountSkillUI(dialog, context, skillService);
     render();
     const button = document.createElement('div');
     button.id = 'ari-menu-button';

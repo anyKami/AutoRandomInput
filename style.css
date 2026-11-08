@@ -187,3 +187,29 @@ body:has(#ari-workbench[open]) { overflow: hidden; }
 @media (prefers-reduced-motion: reduce) {
     #ari-workbench *, #ari-workbench *::after { transition: none !important; }
 }
+
+#ari-workbench .ari-tabs { display: flex; gap: 8px; padding: 10px 24px; border-bottom: 1px solid var(--ari-border); flex-shrink: 0; }
+#ari-workbench .ari-tabs button { min-width: 100px; color: var(--ari-muted); border-color: transparent; background: transparent; }
+#ari-workbench .ari-tabs button[aria-selected="true"] { color: var(--ari-accent); background: var(--ari-accent-soft); border-color: var(--ari-accent-border); }
+#ari-workbench .ari-skill-note { font-size: 12px; line-height: 1.7; color: var(--ari-muted); margin-top: 10px; white-space: pre-wrap; overflow-wrap: anywhere; }
+#ari-workbench .ari-skill-options { display: grid; gap: 16px; margin: 24px 0 16px; }
+#ari-workbench .ari-skill-options label { display: grid; gap: 7px; font-size: 12px; color: var(--ari-muted); }
+#ari-workbench .ari-skill-options select { width: 100%; }
+#ari-workbench .ari-skill-row { display: grid; grid-template-columns: minmax(0, 1fr) 100px 58px; gap: 10px; margin-bottom: 10px; align-items: center; }
+#ari-workbench .ari-skill-table-heading { margin-top: 24px; color: var(--ari-muted); font-size: 12px; }
+#ari-workbench .ari-skill-row input[type="number"] { width: 100%; font: inherit; color: var(--ari-text); background: var(--ari-panel); border: 1px solid var(--ari-border); border-radius: 9px; margin: 0; padding: 9px; }
+#ari-workbench .ari-skill-add { margin-top: 10px; color: var(--ari-accent); border-style: dashed; }
+#ari-workbench .ari-skill-errors { color: var(--ari-error); font-size: 12px; line-height: 1.7; margin-top: 14px; white-space: pre-wrap; }
+#ari-workbench .ari-skill-result-list { display: grid; gap: 10px; margin-top: 12px; font-size: 12px; color: var(--ari-muted); }
+#ari-workbench .ari-skill-result { border: 1px solid var(--ari-border); border-radius: 9px; padding: 12px; overflow-wrap: anywhere; }
+#ari-workbench .ari-skill-result strong { display: block; color: var(--ari-text); margin-bottom: 5px; }
+#ari-workbench .ari-skill-result p { white-space: pre-wrap; line-height: 1.6; font-size: 12px; }
+#ari-workbench .ari-skill-result[data-passed="true"] strong { color: var(--ari-mint); }
+#ari-workbench .ari-skill-result[data-passed="false"] strong { color: var(--ari-error); }
+#ari-workbench .ari-skill-history { margin-top: 32px; padding-top: 24px; border-top: 1px solid var(--ari-border); }
+#ari-workbench .ari-skill-history h3 { font-size: 19px; }
+@media (max-width: 640px) {
+    #ari-workbench .ari-tabs { padding: 8px 16px; }
+    #ari-workbench .ari-skill-row { grid-template-columns: minmax(0, 1fr) 70px 50px; gap: 7px; }
+    #ari-workbench .ari-skill-row button { padding: 7px 5px; }
+}

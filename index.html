@@ -5,7 +5,7 @@
         <path d="M20 2 38 13v18L20 42 2 31V13L20 2Z M2 13l18 10 18-10 M20 23v19 M20 2v21" />
         <circle cx="20" cy="23" r="3" />
       </svg>
-      <div><span class="ari-eyebrow">AUTO RANDOM INPUT</span><h2 id="ari-title">随机指令工作台</h2></div>
+      <div><span class="ari-eyebrow">AUTO RANDOM INPUT</span><h2 id="ari-title">随机指令工作台 2.0</h2></div>
     </div>
     <div class="ari-header-actions">
       <select id="ari-theme" aria-label="界面主题" title="界面背景主题"></select>
@@ -14,7 +14,11 @@
     </div>
   </header>
 
-  <div class="ari-layout">
+  <nav class="ari-tabs" role="tablist" aria-label="工作台功能">
+    <button id="ari-tab-random" type="button" role="tab" aria-selected="true" aria-controls="ari-random-panel">随机指令</button>
+    <button id="ari-tab-skills" type="button" role="tab" aria-selected="false" aria-controls="ari-skills-panel" tabindex="-1">技能检定</button>
+  </nav>
+  <div id="ari-random-panel" class="ari-layout" role="tabpanel" aria-labelledby="ari-tab-random">
     <aside class="ari-sidebar" aria-label="随机配置">
       <section class="ari-group-section">
         <label class="ari-section-label" for="ari-group">配置组 <span id="ari-group-count"></span></label>
@@ -68,5 +72,29 @@
     </section>
   </div>
 
-  <footer class="ari-footer"><span><span class="ari-status-dot"></span>开启自动投掷后，每次发送会替换此前的随机指令。</span><span class="ari-escape-hint"><kbd>Esc</kbd> 关闭</span></footer>
+  <div id="ari-skills-panel" class="ari-layout" role="tabpanel" aria-labelledby="ari-tab-skills" hidden>
+    <aside class="ari-sidebar">
+      <label class="ari-toggle"><input id="ari-skills-enabled" type="checkbox"><span class="ari-switch"></span><span id="ari-skills-enabled-label">技能检定已关闭</span></label>
+      <p id="ari-skills-status" class="ari-skill-note" role="status"></p>
+      <div class="ari-skill-options">
+        <label for="ari-skills-dice">统一骰型<select id="ari-skills-dice"><option value="10">d10</option><option value="20" selected>d20</option><option value="100">d100</option></select></label>
+        <label for="ari-skills-mode">判定频率<select id="ari-skills-mode"><option value="challenge">有明确挑战时</option><option value="every">每轮判定</option></select></label>
+        <label for="ari-skills-max">每轮检定上限<select id="ari-skills-max"><option value="1">1</option><option value="2">2</option><option value="3">3</option></select></label>
+      </div>
+      <p class="ari-skill-note">AI 在上限内选择技能，各项独立投骰。是否采用每项结果，由 AI 根据你的最新行动决定。</p>
+      <section class="ari-last-roll"><span class="ari-eyebrow">等待下一轮检定</span><div id="ari-skill-pending" class="ari-skill-result-list"></div><p id="ari-skill-pending-note" class="ari-skill-note"></p></section>
+    </aside>
+    <section class="ari-editor" aria-labelledby="ari-skills-title">
+      <div class="ari-editor-heading"><div><span class="ari-eyebrow">PROTAGONIST SKILLS</span><h3 id="ari-skills-title">主角技能</h3></div><span class="ari-save-status"><span></span>当前聊天自动保存</span></div>
+      <p id="ari-skill-range" class="ari-skill-note"></p>
+      <div class="ari-skill-row ari-skill-table-heading"><span>技能名称</span><span>技能值</span><span></span></div>
+      <div id="ari-skills-grid"></div>
+      <p id="ari-skills-empty" class="ari-skill-note">添加主角拥有的技能，让 AI 按剧情选择下一轮需要检定的项目。</p>
+      <button id="ari-add-skill" type="button" class="ari-skill-add">＋ 添加技能</button>
+      <p id="ari-skills-errors" class="ari-skill-errors" role="alert" hidden></p>
+      <section class="ari-skill-history"><h3>最近一次检定</h3><p class="ari-skill-note">以下是本地骰点；AI 会逐项判断是否与本轮行动相关。</p><div id="ari-skill-results" class="ari-skill-result-list" aria-live="polite"></div><p id="ari-skill-last-note" class="ari-skill-note"></p></section>
+    </section>
+  </div>
+
+  <footer class="ari-footer"><span><span class="ari-status-dot"></span>每次发送更新本轮指令；技能检定按当前聊天独立保存。</span><span class="ari-escape-hint"><kbd>Esc</kbd> 关闭</span></footer>
 </dialog>
