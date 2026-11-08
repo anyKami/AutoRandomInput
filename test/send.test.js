@@ -46,6 +46,49 @@ function host() {
     };
 }
 
+test('d100 reaches recall once, reuses its range snapshot on retries, and saves the same result', async t => {
+    const h = host();
+    const rule = activeGroup(h.settings).rules[0];
+    rule.diceSides = 100;
+    rule.ranges = [{ range: '1-14', command: '范围事件' }, { range: '15-31', command: '另一个事件' }];
+    activeGroup(h.settings).rules = [rule];
+    const random = t.mock.method(Math, 'random', () => 0.135);
+    let recallInput;
+    h.ctx.eventSource.on('before', () => { recallInput = h.input.value; });
+    await h.install();
+    await h.before();
+    assert.ok(recallInput.includes('范围事件\n> （投掷结果：d100 = 14）'));
+    rule.ranges[0] = { range: '1-100', command: '编辑后的事件' };
+    await h.before();
+    const message = await h.commit();
+    await h.ctx.eventSource.emit('sent', 0);
+    await h.before('regenerate');
+    assert.equal(random.mock.callCount(), 1);
+    assert.equal(message.extra[SETTINGS_KEY].rolls[0].range, '1-14');
+    assert.equal(message.extra[SETTINGS_KEY].rolls[0].result, 14);
+    assert.ok(!message.mes.includes('编辑后的事件'));
+    assert.equal(JSON.parse(h.saved[0])[0].extra[SETTINGS_KEY].rolls[0].range, '1-14');
+});
+
+test('d100 uncovered outcomes pass unchanged through recall and repeated generation events', async t => {
+    const h = host();
+    const rule = activeGroup(h.settings).rules[0];
+    rule.diceSides = 100;
+    rule.ranges = [{ range: '1-89', command: '范围事件' }];
+    activeGroup(h.settings).rules = [rule];
+    const random = t.mock.method(Math, 'random', () => 0.995);
+    await h.install();
+    await h.before();
+    assert.equal(h.input.value, '用户输入');
+    h.input.value = `<本轮用户输入>${h.input.value}</本轮用户输入>\n<recall>记忆</recall>`;
+    await h.before();
+    const message = await h.commit();
+    assert.equal(random.mock.callCount(), 1);
+    assert.equal(message.extra[SETTINGS_KEY].rolls[0].result, 100);
+    assert.equal(message.extra[SETTINGS_KEY].rolls[0].uncovered, true);
+    assert.ok(!message.mes.includes('本轮指令'));
+});
+
 test('new messages are saved before the host creates their DOM nodes', async t => {
     const h = host();
     const errors = t.mock.method(console, 'error', () => {});

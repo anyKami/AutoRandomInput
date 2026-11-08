@@ -19,7 +19,7 @@ test('fresh settings are disabled, visible, with twenty blank slots and d10', ()
     assert.deepEqual(firstRule(settings).commands, Array(20).fill(''));
 });
 
-test('each d1–d10 and d20 maps equal intervals to the corresponding slots, including boundaries', () => {
+test('each d1–d10, d20 and d100 rolls every face equally, including boundaries', () => {
     for (const sides of DICE_SIDES) {
         assert.equal(rollDice(sides, () => 0), 1);
         assert.equal(rollDice(sides, () => 1 - Number.EPSILON), sides);

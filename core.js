@@ -1,7 +1,40 @@
 export const SETTINGS_KEY = 'auto_random_input';
 export const THEMES = { navy: '深海蓝', graphite: '石墨黑', forest: '森林绿', plum: '暮紫', paper: '暖白' };
-export const DICE_SIDES = [...Array.from({ length: 10 }, (_, index) => index + 1), 20];
+export const DICE_SIDES = [...Array.from({ length: 10 }, (_, index) => index + 1), 20, 100];
 export const MAX_COMMANDS = 20;
+
+function normalizeRanges(ranges) {
+    return (Array.isArray(ranges) ? ranges : []).map(row => ({
+        range: typeof row?.range === 'string' ? row.range : '',
+        command: typeof row?.command === 'string' ? row.command : '',
+    }));
+}
+
+// Keep incomplete input as a saved draft; only valid, non-overlapping tables may roll.
+export function validateCommandRanges(ranges) {
+    const entries = [];
+    const errors = [];
+    normalizeRanges(ranges).forEach((row, index) => {
+        const text = row.range.trim();
+        if (!text && !row.command.trim()) return;
+        const match = /^(\d+)(?:\s*[-–—－]\s*(\d+))?$/.exec(text);
+        const start = Number(match?.[1]);
+        const end = Number(match?.[2] ?? match?.[1]);
+        if (!match || !Number.isInteger(start) || !Number.isInteger(end) || start < 1 || end > 100 || start > end) {
+            errors.push({ indexes: [index], message: `第 ${index + 1} 行：请填写 1–100 内的整数范围（如 1-14 或 50），起点不能大于终点。` });
+            return;
+        }
+        for (const previous of entries) {
+            if (start <= previous.end && end >= previous.start) {
+                errors.push({ indexes: [previous.index, index], message: `第 ${previous.index + 1} 行与第 ${index + 1} 行范围重叠（${Math.max(start, previous.start)}–${Math.min(end, previous.end)}）。` });
+            }
+        }
+        entries.push({ ...row, index, start, end, range: start === end ? String(start) : `${start}-${end}` });
+    });
+    const covered = new Set();
+    for (const entry of entries) for (let point = entry.start; point <= entry.end; point++) covered.add(point);
+    return { valid: !errors.length, entries, errors, coveredCount: covered.size };
+}
 
 // These are local identifiers, not security tokens; allow ordinary HTTP deployments too.
 function newId() {
@@ -15,6 +48,7 @@ export function createRule(name, source) {
         enabled: source?.enabled !== false,
         diceSides: source?.diceSides ?? 10,
         commands: Array.from({ length: MAX_COMMANDS }, (_, index) => source?.commands?.[index] ?? ''),
+        ranges: normalizeRanges(source?.ranges),
     };
 }
 
@@ -70,6 +104,7 @@ export function normalizeSettings(value = {}) {
                 enabled: rule?.enabled !== false,
                 diceSides: DICE_SIDES.includes(rule?.diceSides) ? rule.diceSides : 10,
                 commands: Array.from({ length: MAX_COMMANDS }, (_, slot) => typeof rule?.commands?.[slot] === 'string' ? rule.commands[slot] : ''),
+                ranges: normalizeRanges(rule?.ranges),
             })),
         }));
     if (!groups.length) groups.push(createGroup('默认配置'));
@@ -98,7 +133,7 @@ export function uniqueName(items, base) {
 }
 
 export function rollDice(sides, random = Math.random) {
-    if (!DICE_SIDES.includes(sides)) throw new RangeError('骰子面数必须为 1–10 或 20');
+    if (!DICE_SIDES.includes(sides)) throw new RangeError('骰子面数必须为 1–10、20 或 100');
     return Math.floor(random() * sides) + 1;
 }
 
@@ -129,11 +164,18 @@ export function createRollRecord(settings, random = Math.random) {
     const group = activeGroup(settings);
     const commands = [];
     const rolls = group.rules.filter(rule => rule.enabled).map(rule => {
+        const base = { ruleId: rule.id, ruleName: rule.name, sides: rule.diceSides };
+        const ranges = rule.diceSides === 100 ? validateCommandRanges(rule.ranges) : null;
+        if (ranges && !ranges.valid) {
+            return { ...base, result: null, skipped: true, error: ranges.errors.map(error => error.message).join('；') };
+        }
         const result = rollDice(rule.diceSides, random);
-        const command = rule.commands[result - 1];
+        const match = ranges?.entries.find(row => result >= row.start && result <= row.end);
+        const command = ranges ? match?.command ?? '' : rule.commands[result - 1];
         const skipped = !command.trim();
         if (!skipped) commands.push(settings.includeRollResult ? `${command}\n（投掷结果：d${rule.diceSides} = ${result}）` : command);
-        return { ruleId: rule.id, ruleName: rule.name, result, sides: rule.diceSides, skipped };
+        return { ...base, result, skipped,
+            ...(ranges ? { range: match?.range ?? '', rangeIndex: match?.index ?? null, uncovered: !match } : {}) };
     });
     return { groupId: group.id, groupName: group.name, rolls,
         ...makeBlock(commands.join('\n\n'), settings.stealthMode) };

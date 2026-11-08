@@ -5,7 +5,7 @@
         <path d="M20 2 38 13v18L20 42 2 31V13L20 2Z M2 13l18 10 18-10 M20 23v19 M20 2v21" />
         <circle cx="20" cy="23" r="3" />
       </svg>
-      <div><span class="ari-eyebrow">AUTO RANDOM INPUT</span><h2 id="ari-title">随机指令工作台 2.1</h2></div>
+      <div><span class="ari-eyebrow">AUTO RANDOM INPUT</span><h2 id="ari-title">随机指令工作台 2.2</h2></div>
     </div>
     <div class="ari-header-actions">
       <select id="ari-theme" aria-label="界面主题" title="界面背景主题"></select>
@@ -64,10 +64,16 @@
         <div class="ari-rule-name-field"><label for="ari-rule-name">指令名称</label><input id="ari-rule-name" type="text" maxlength="40" autocomplete="off"></div>
         <div class="ari-rule-actions"><button id="ari-copy-rule" type="button">复制指令</button><button id="ari-delete-rule" type="button">删除指令</button></div>
       </div>
-      <div class="ari-rule-options"><label for="ari-sides">骰子范围 <select id="ari-sides" aria-label="骰子面数"></select></label><div class="ari-dice-facts"><span>抽取范围 <b id="ari-range">1–10</b></span><span>每条概率 <b id="ari-probability">10%</b></span></div></div>
+      <div class="ari-rule-options"><label for="ari-sides">骰子范围 <select id="ari-sides" aria-label="骰子面数"></select></label><div class="ari-dice-facts"><span>抽取范围 <b id="ari-range">1–10</b></span><span><span id="ari-probability-label">每条概率</span> <b id="ari-probability">10%</b></span></div></div>
       <p id="ari-disabled-hint" hidden>此指令已暂停。启用后会参与每次发送时的独立投掷。</p>
       <div class="ari-deck-meta"><span id="ari-filled-count"></span><span>空白命令 · 投中跳过</span></div>
       <div id="ari-command-grid"></div>
+      <div id="ari-range-editor" hidden>
+        <p class="ari-range-help">每行填写骰点范围和指令，包含起点与终点；可留空档，范围不能重叠。也可填写单个点数，如 50。</p>
+        <div id="ari-range-list"></div>
+        <button id="ari-add-range" type="button">＋ 添加范围指令</button>
+        <p id="ari-range-status" role="status" aria-live="polite"></p>
+      </div>
       <p id="ari-hidden-hint" class="ari-hidden-hint" hidden></p>
     </section>
   </div>

@@ -1,11 +1,11 @@
-import { DICE_SIDES, SETTINGS_KEY, THEMES, activeGroup, createGroup, createRule, createSampleGroup, displayMessage, normalizeSettings, uniqueGroupName, uniqueName } from './core.js';
+import { DICE_SIDES, SETTINGS_KEY, THEMES, activeGroup, createGroup, createRule, createSampleGroup, displayMessage, normalizeSettings, uniqueGroupName, uniqueName, validateCommandRanges } from './core.js';
 import { installSendHooks } from './send.js';
 import { installSkillService } from './mvu-skills.js';
 import { mountSkillUI } from './skill-ui.js';
 import { SKILL_GROUPS_KEY, normalizeSkillGroups } from './skill-groups.js';
 import { createUpdateReloader, flushBeforeReload } from './update-reload.js';
 
-const VERSION = '2.1.3';
+const VERSION = '2.2.0';
 
 const context = () => SillyTavern.getContext();
 const settings = () => context().extensionSettings[SETTINGS_KEY];
@@ -63,6 +63,10 @@ function renderStatus() {
 
 function renderCounter() {
     const rule = selectedRule();
+    if (rule.diceSides === 100) {
+        renderRangeValidation();
+        return;
+    }
     const count = rule.commands.slice(0, rule.diceSides).filter(text => text.trim()).length;
     $('#ari-filled-count').textContent = `${rule.diceSides} 个编号 · ${count} 条已填写`;
 }
@@ -72,25 +76,86 @@ function renderLastRoll() {
     const chat = context().chat ?? [];
     const record = chat.findLast(message => message?.is_user && message.extra?.[SETTINGS_KEY])?.extra[SETTINGS_KEY];
     const rolls = record?.rolls ?? (record ? [{ ...record, ruleName: '骰子指令 1' }] : []);
-    $('#ari-last-group').textContent = record ? `${record.groupName} · ${rolls.length} 次投掷` : '等待下一次发送';
+    const invalidCount = rolls.filter(roll => roll.error).length;
+    $('#ari-last-group').textContent = record ? `${record.groupName} · ${rolls.length - invalidCount} 次投掷${invalidCount ? ` · ${invalidCount} 套配置错误` : ''}` : '等待下一次发送';
     const list = $('#ari-last-rolls');
     list.replaceChildren();
     for (const roll of rolls) {
         const item = document.createElement('div');
         item.className = 'ari-roll-item';
         item.innerHTML = '<strong class="ari-roll-number"></strong><div><span></span><small></small></div>';
-        item.querySelector('strong').textContent = String(roll.result).padStart(2, '0');
+        item.querySelector('strong').textContent = roll.error ? '—' : String(roll.result).padStart(2, '0');
         item.querySelector('span').textContent = `${roll.ruleName} · d${roll.sides}`;
-        item.querySelector('small').textContent = roll.skipped ? '空白，已跳过' : `命中第 ${roll.result} 条`;
+        item.querySelector('small').textContent = roll.error ? `未投掷：${roll.error}`
+            : roll.sides === 100 ? (roll.uncovered ? '未覆盖此骰点，已跳过' : `命中 ${roll.range}${roll.skipped ? ' · 空白，已跳过' : ''}`)
+                : roll.skipped ? '空白，已跳过' : `命中第 ${roll.result} 条`;
         list.append(item);
     }
     if (record && !rolls.length) list.textContent = '本次没有启用的指令。';
     const group = activeGroup(settings());
     const rule = selectedRule();
     const hit = rolls.find(roll => roll.ruleId === rule.id);
-    dialog.querySelectorAll('.ari-command-card').forEach(card => {
+    dialog.querySelectorAll('.ari-command-card, .ari-range-row').forEach(card => {
         card.dataset.hit = String(!!hit && !hit.skipped && record.groupId === group.id &&
-            hit.sides === rule.diceSides && Number(card.dataset.index) + 1 === hit.result);
+            hit.sides === rule.diceSides && (rule.diceSides === 100
+                ? Number(card.dataset.index) === hit.rangeIndex && card.dataset.range === hit.range
+                : Number(card.dataset.index) + 1 === hit.result));
+    });
+}
+
+function renderRangeValidation() {
+    const rule = selectedRule();
+    const validation = validateCommandRanges(rule.ranges);
+    $('#ari-filled-count').textContent = validation.valid
+        ? `${validation.entries.length} 条范围 · 覆盖 ${validation.coveredCount}/100 点`
+        : `${rule.ranges.length} 行 · 范围待修正`;
+    const status = $('#ari-range-status');
+    status.dataset.invalid = String(!validation.valid);
+    status.textContent = validation.valid
+        ? `未覆盖 ${100 - validation.coveredCount} 个骰点，投中不追加指令、不重投。`
+        : `${validation.errors[0].message}${validation.errors.length > 1 ? ` 共 ${validation.errors.length} 处错误。` : ''} 本套 d100 暂停投掷，修正后自动恢复。`;
+    $('#ari-range-list').querySelectorAll('.ari-range-row').forEach(row => {
+        const index = Number(row.dataset.index);
+        const error = validation.errors.find(item => item.indexes.includes(index));
+        const entry = validation.entries.find(item => item.index === index);
+        row.dataset.invalid = String(!!error);
+        row.dataset.range = entry?.range ?? '';
+        row.querySelector('input').setAttribute('aria-invalid', String(!!error));
+        row.querySelector('.ari-range-info').textContent = error ? '范围待修正' : entry
+            ? `${entry.end - entry.start + 1}%${entry.command.trim() ? '' : ' · 空白跳过'}` : '空白行不参与';
+        const message = row.querySelector('.ari-range-error');
+        message.hidden = !error;
+        message.textContent = error?.message ?? '';
+    });
+}
+
+function renderRanges() {
+    const rule = selectedRule();
+    const list = $('#ari-range-list');
+    list.replaceChildren();
+    rule.ranges.forEach((entry, index) => {
+        const row = document.createElement('div');
+        row.className = 'ari-range-row';
+        row.dataset.index = String(index);
+        row.innerHTML = `<div class="ari-range-field"><label for="ari-command-range-${index}">骰点范围</label><input id="ari-command-range-${index}" type="text" placeholder="如 1-14" autocomplete="off" aria-describedby="ari-range-error-${index}"><small class="ari-range-info"></small></div><div class="ari-range-content"><label for="ari-range-command-${index}">指令内容</label><textarea id="ari-range-command-${index}" rows="3" placeholder="命中此范围时追加的指令…" spellcheck="false"></textarea></div><button type="button" class="ari-remove-range" aria-label="删除第 ${index + 1} 行范围" title="删除此行">×</button><p id="ari-range-error-${index}" class="ari-range-error" hidden></p>`;
+        const input = row.querySelector('input');
+        const command = row.querySelector('textarea');
+        input.value = entry.range;
+        command.value = entry.command;
+        const update = () => {
+            entry.range = input.value;
+            entry.command = command.value;
+            renderRangeValidation(); renderLastRoll(); save();
+        };
+        input.addEventListener('input', update);
+        command.addEventListener('input', update);
+        row.querySelector('button').addEventListener('click', () => {
+            rule.ranges.splice(index, 1);
+            save(); renderRanges(); renderCounter(); renderLastRoll();
+            const next = list.querySelectorAll('input')[Math.min(index, rule.ranges.length - 1)];
+            (next ?? $('#ari-add-range')).focus();
+        });
+        list.append(row);
     });
 }
 
@@ -135,10 +200,14 @@ function renderCommands() {
     $('#ari-dice-label').textContent = `D${rule.diceSides}`;
     $('#ari-range').textContent = rule.diceSides === 1 ? '1' : `1–${rule.diceSides}`;
     $('#ari-probability').textContent = `${Number((100 / rule.diceSides).toFixed(2))}%`;
+    $('#ari-probability-label').textContent = rule.diceSides === 100 ? '每点概率' : '每条概率';
+    $('#ari-range-editor').hidden = rule.diceSides !== 100;
     const grid = $('#ari-command-grid');
+    grid.hidden = rule.diceSides === 100;
     grid.replaceChildren();
+    $('#ari-range-list').replaceChildren();
     // Only render active slots; keep hidden commands when switching die sizes.
-    rule.commands.slice(0, rule.diceSides).forEach((text, index) => {
+    rule.commands.slice(0, rule.diceSides === 100 ? 0 : rule.diceSides).forEach((text, index) => {
         const card = document.createElement('article');
         card.className = 'ari-command-card';
         card.dataset.index = String(index);
@@ -158,8 +227,9 @@ function renderCommands() {
         update();
         grid.append(card);
     });
+    if (rule.diceSides === 100) renderRanges();
     const hint = $('#ari-hidden-hint');
-    hint.hidden = rule.diceSides === rule.commands.length;
+    hint.hidden = rule.diceSides === 100 || rule.diceSides === rule.commands.length;
     hint.textContent = hint.hidden ? '' : `第 ${rule.diceSides + 1}–${rule.commands.length} 条已收起，内容仍保留。调大骰子面数即可恢复。`;
     renderCounter();
     renderLastRoll();
@@ -264,7 +334,18 @@ function bindUI() {
     $('#ari-stealth').addEventListener('change', event => { settings().stealthMode = event.target.checked; save(); renderStatus(); });
     $('#ari-include-result').addEventListener('change', event => { settings().includeRollResult = event.target.checked; save(); });
     $('#ari-theme').addEventListener('change', event => { settings().theme = event.target.value; save(); renderStatus(); });
-    $('#ari-sides').addEventListener('change', event => { selectedRule().diceSides = Number(event.target.value); save(); renderRules(); renderCommands(); });
+    $('#ari-sides').addEventListener('change', event => {
+        const rule = selectedRule();
+        rule.diceSides = Number(event.target.value);
+        if (rule.diceSides === 100 && !rule.ranges.length) rule.ranges.push({ range: '', command: '' });
+        save(); renderRules(); renderCommands();
+    });
+    $('#ari-add-range').addEventListener('click', () => {
+        const rule = selectedRule();
+        rule.ranges.push({ range: '', command: '' });
+        save(); renderRanges(); renderCounter(); renderLastRoll();
+        $(`#ari-command-range-${rule.ranges.length - 1}`).focus();
+    });
     $('#ari-group').addEventListener('change', event => { settings().activeGroupId = event.target.value; selectedRuleId = ''; closeGroupForm(); save(); renderRules(); renderCommands(); });
     $('#ari-rule-name').addEventListener('input', event => { selectedRule().name = event.target.value; save(); renderRules(); });
     $('#ari-rule-name').addEventListener('change', event => {
