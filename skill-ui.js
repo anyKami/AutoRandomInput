@@ -128,12 +128,14 @@ export function mountSkillUI(dialog, getContext, service) {
         $('#ari-randomize-skills').disabled = !canEdit() || !config.skills.length || !validLimit;
         $('#ari-skill-pending-note').textContent = state.selection.issues.join('\n');
         renderList($('#ari-skill-pending'), state.selection.checks.map(check => ({ title: check.name, detail: check.action })), '暂无待检定技能');
-        const last = getContext().chat.findLast(message => message.is_user && message.extra?.auto_random_input?.skills)?.extra.auto_random_input.skills;
+        const chat = getContext().chat;
+        const latestTurn = chat.findLast(message => message.is_user && message.extra?.auto_random_input?.skills)?.extra.auto_random_input.skills;
+        const last = chat.findLast(message => message.is_user && message.extra?.auto_random_input?.skills?.results?.length)?.extra.auto_random_input.skills;
         renderList($('#ari-skill-results'), (last?.results ?? []).map(result => ({
             title: `${result.name} · ${result.passed ? '通过' : '失败'}`, passed: result.passed,
             detail: `${result.action}\nd${result.sides} = ${result.result}，技能值 ${result.value}`,
         })), '尚无检定结果');
-        $('#ari-skill-last-note').textContent = last?.issues?.join('\n') ?? '';
+        $('#ari-skill-last-note').textContent = latestTurn?.issues?.length ? `本轮提示：${latestTurn.issues.join('\n')}` : '';
     }
     function renderRows() {
         const config = store() ?? normalizeSkillSettings();
