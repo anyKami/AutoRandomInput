@@ -1,7 +1,7 @@
 {
   "display_name": "随机指令",
-  "description": "随机指令工作台 2.2：d100 范围指令、MVU 通用技能检定、可复用技能配置组与 12 套技能样板。",
-  "version": "2.2.0",
+  "description": "随机指令工作台 2.3：技能加值与 DC 检定、AI 适用性回报、d100 范围指令、可复用技能配置组与 12 套样板。",
+  "version": "2.3.0",
   "author": "anyKami",
   "homepage": "https://github.com/anyKami/AutoRandomInput",
   "loading_order": 30,

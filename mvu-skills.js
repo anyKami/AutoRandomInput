@@ -1,5 +1,6 @@
 import { SKILL_FIELD, SKILL_NAMESPACE, SKILL_PATH, SKILL_SETTINGS_KEY, createSkillTurn, isObject, normalizeSkillSettings,
-    readSkillSelection, replyFingerprint, requestBefore, skillBlocks, skillErrors, unwrap, validateSelection } from './skills.js';
+    readSkillSelection, replyFingerprint, requestBefore, skillBlocks, skillErrors, unwrap, validateSelection,
+    SKILL_VERSION, packetMatchesReply, skillPacket } from './skills.js';
 
 export function mvuApi(host = globalThis) {
     if (typeof host.Mvu?.getMvuData === 'function') return host.Mvu;
@@ -40,7 +41,37 @@ export function installSkillService(getContext, onChange = () => {}, host = glob
     const frames = new WeakMap();
     let lastError = '';
     let sheetRevision = 0;
-    const settings = () => normalizeSkillSettings(getContext().chatMetadata?.[SKILL_SETTINGS_KEY]);
+    const settings = () => {
+        const ctx = getContext();
+        const saved = ctx.chatMetadata?.[SKILL_SETTINGS_KEY];
+        const config = normalizeSkillSettings(saved);
+        if (ctx.chatMetadata && ctx.chat.length && saved?.version !== SKILL_VERSION) {
+            ctx.chatMetadata[SKILL_SETTINGS_KEY] = config;
+            if (ctx.saveMetadataDebounced) ctx.saveMetadataDebounced();
+            else if (ctx.saveMetadata) void ctx.saveMetadata();
+        }
+        return config;
+    };
+    const recent = () => {
+        const ctx = getContext();
+        const index = ctx.chat.findLastIndex(message => message.is_user && !message.is_system && message.extra?.auto_random_input?.skills?.results?.length);
+        const turn = ctx.chat[index]?.extra.auto_random_input.skills;
+        if (!turn || turn.request.version !== SKILL_VERSION) return { turn, reports: [], issues: [] };
+        const api = mvuApi(host);
+        // Read the response to this batch, not the latest turn's unrelated MVU packet.
+        for (let i = index + 1; i < ctx.chat.length; i++) {
+            const message = ctx.chat[i];
+            if (message.is_system) continue;
+            if (message.is_user) break;
+            let packet;
+            try { packet = skillPacket(api?.getMvuData({ type: 'message', message_id: i })); } catch { continue; }
+            if (packet?.规则版本 === SKILL_VERSION && packetMatchesReply(packet, turn.request, message, i)) {
+                const checked = validateSelection(packet, turn.request);
+                return { turn, reports: checked.本轮处理, issues: [...new Set([...(packet.issues ?? []), ...checked.issues])] };
+            }
+        }
+        return { turn, reports: [], issues: ['等待该次检定对应的 AI 回复回报采用情况。'] };
+    };
     const view = (beforeId = getContext().chat.length) => {
         const ctx = getContext();
         const config = settings();
@@ -127,8 +158,11 @@ export function installSkillService(getContext, onChange = () => {}, host = glob
     const events = getContext().eventSource;
     events.on('mag_command_parsed', parsed);
     events.on('mag_before_message_update', beforeWrite);
-    return { settings, view, prepare, restore,
-        revision: () => sheetRevision,
+    return { settings, view, prepare, restore, recent,
+        revision: () => {
+            const { migrationSnapshot, ...config } = settings();
+            return `${sheetRevision}:${JSON.stringify(config)}`;
+        },
         resetSheet: () => { sheetRevision++; onChange(); },
         enabled: () => settings().enabled,
         reset: () => { lastError = ''; onChange(); },

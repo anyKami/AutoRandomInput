@@ -8,8 +8,8 @@ import { createSkillGroup, loadSkillGroup } from '../skill-groups.js';
 
 function fixture() {
     const listeners = new Map();
-    const ctx = { chat: [], chatMetadata: { [SKILL_SETTINGS_KEY]: normalizeSkillSettings({ enabled: true, maxChecks: 3, skills: [
-        { id: 'lock', name: '撬锁', value: 20 }, { id: 'eye', name: '侦查', value: 0 },
+    const ctx = { chat: [], chatMetadata: { [SKILL_SETTINGS_KEY]: normalizeSkillSettings({ version: 2, pointLimit: 20, enabled: true, maxChecks: 3, skills: [
+        { id: 'lock', name: '撬锁', modifier: 20 }, { id: 'eye', name: '侦查', modifier: 0 },
     ] }) }, extensionSettings: { [SETTINGS_KEY]: normalizeSettings() },
     eventTypes: { GENERATION_AFTER_COMMANDS: 'before', MESSAGE_SENT: 'sent', CHAT_CHANGED: 'chat', MESSAGE_SWIPED: 'swipe', MESSAGE_DELETED: 'delete' },
     eventSource: { on(event, fn) { const all = listeners.get(event) ?? []; all.push(fn); listeners.set(event, all); },
@@ -22,7 +22,7 @@ function fixture() {
     const reply = () => { ctx.chat.push({ mes: '门锁复杂，门外有脚步。', swipe_id: 0 }); return ctx.chat.at(-2).extra[SETTINGS_KEY].skills.request; };
     const parse = async (req, patch = {}) => {
         const variables = { stat_data: { 场景: { 回合: 1 } }, schema: {}, ...patch };
-        const commands = [{ type: 'set', args: ["'场景.回合'", '2'] }, { type: 'set', args: ["'随机指令工作台.技能判定'", JSON.stringify({ 请求ID: req.id, 待判定: [{ 技能名: '撬锁', 对应事件: '打开门锁' }, { 技能名: '侦查', 对应事件: '发现门外的人' }] })] }];
+        const commands = [{ type: 'set', args: ["'场景.回合'", '2'] }, { type: 'set', args: ["'随机指令工作台.技能判定'", JSON.stringify({ 规则版本: 2, 本轮处理: [], 请求ID: req.id, 待判定: [{ 技能名: '撬锁', 对应事件: '打开门锁', 判定条件: '普通门锁与正常光照，无干扰', DC: 15 }, { 技能名: '侦查', 对应事件: '发现门外的人', 判定条件: '普通门锁与正常光照，无干扰', DC: 15 }] })] }];
         await ctx.eventSource.emit('mag_command_parsed', variables, commands, ctx.chat.at(-1).mes);
         return { variables, commands };
     };
@@ -53,7 +53,7 @@ test('changing swipe while a prepared send is cancelled removes only its own pen
     await h.ctx.eventSource.emit('swipe', 0);
     assert.equal(h.input.value, '行动<!-- unrelated -->');
     await h.ctx.eventSource.emit('before', 'normal');
-    assert.equal(h.input.value.split('[随机指令工作台 2.0').length, 2);
+    assert.equal(h.input.value.split('[随机指令工作台 · 技能检定协议 v2').length, 2);
 });
 
 test('skill-only sends, cancellation, duplicate events and regeneration never reroll persisted results', async t => {
@@ -115,7 +115,7 @@ test('loading another skill group discards cancelled draft results from the old 
     const message = await h.commit();
     assert.equal(message.extra[SETTINGS_KEY].skills.results.length, 0);
     assert.equal(random.mock.callCount(), 2);
-    assert.equal(message.mes.split('[随机指令工作台 2.0').length, 2);
+    assert.equal(message.mes.split('[随机指令工作台 · 技能检定协议 v2').length, 2);
 });
 
 test('an overspent point budget does not inject a skill request or roll dice', async t => {
@@ -126,7 +126,7 @@ test('an overspent point budget does not inject a skill request or roll dice', a
     const message = await h.commit();
     assert.equal(message.mes, '查看门锁');
     assert.equal(message.extra[SETTINGS_KEY].skills, undefined);
-    assert.match(h.service.view().errors.join(), /超过总能力值上限/);
+    assert.match(h.service.view().errors.join(), /超过总加值预算/);
     assert.equal(random.mock.callCount(), 0);
 });
 
@@ -143,12 +143,88 @@ test('JSON Patch is accepted; absent, malicious or partial commands do not produ
         assert.ok(h.service.view().selection.issues.length);
     }
     const variables = { stat_data: { 场景: {} }, schema: {} };
-    await h.ctx.eventSource.emit('mag_command_parsed', variables, [{ op: 'replace', path: '/随机指令工作台/技能判定', value: { 请求ID: req.id, 待判定: [{ 技能名: '撬锁', 对应事件: '开锁' }] } }], h.ctx.chat.at(-1).mes);
+    await h.ctx.eventSource.emit('mag_command_parsed', variables, [{ op: 'replace', path: '/随机指令工作台/技能判定', value: { 规则版本: 2, 本轮处理: [], 请求ID: req.id, 待判定: [{ 技能名: '撬锁', 对应事件: '开锁', 判定条件: '普通门锁与正常光照，无干扰', DC: 15 }] } }], h.ctx.chat.at(-1).mes);
     await h.ctx.eventSource.emit('mag_before_message_update', { variables }); h.data.set(1, variables);
     assert.equal(h.service.view().selection.checks.length, 1);
-    const translated = [{ type: 'insert', reason: 'json_patch', args: ['["随机指令工作台"]', '"技能判定"', JSON.stringify({ 请求ID: req.id, 待判定: [{ 技能名: '侦查', 对应事件: '观察走廊' }] })] }];
+    const translated = [{ type: 'insert', reason: 'json_patch', args: ['["随机指令工作台"]', '"技能判定"', JSON.stringify({ 规则版本: 2, 本轮处理: [], 请求ID: req.id, 待判定: [{ 技能名: '侦查', 对应事件: '观察走廊', 判定条件: '普通门锁与正常光照，无干扰', DC: 15 }] })] }];
     await h.ctx.eventSource.emit('mag_command_parsed', variables, translated, h.ctx.chat.at(-1).mes);
     assert.equal(translated.length, 0);
     await h.ctx.eventSource.emit('mag_before_message_update', { variables });
     assert.equal(h.service.view().selection.checks[0].name, '侦查');
+});
+
+test('migration persists before first send even if the skill UI has never opened', () => {
+    const h = fixture();
+    const old = { version: 1, enabled: true, skills: [{ id: 'a', name: '观察', value: 20 }] };
+    h.ctx.chatMetadata[SKILL_SETTINGS_KEY] = old;
+    h.ctx.chat.push({ mes: '开场' });
+    let saved = 0;
+    h.ctx.saveMetadataDebounced = () => saved++;
+    assert.equal(h.service.settings().skills[0].modifier, 3);
+    assert.equal(h.ctx.chatMetadata[SKILL_SETTINGS_KEY].version, 2);
+    h.ctx.chatMetadata[SKILL_SETTINGS_KEY].skills[0].modifier = -4;
+    assert.equal(h.service.settings().skills[0].modifier, -4);
+    assert.equal(saved, 1);
+    assert.deepEqual(h.service.settings().migrationSnapshot, old);
+});
+
+test('recent adoption reports follow their own reply and swipe even after a later empty turn', async () => {
+    const h = fixture(); await h.install();
+    await h.ctx.eventSource.emit('before', 'normal'); await h.commit();
+    const first = await h.parse(h.reply());
+    await h.ctx.eventSource.emit('mag_before_message_update', { variables: first.variables }); h.data.set(1, first.variables);
+    h.input.value = '开锁并观察'; await h.ctx.eventSource.emit('before', 'normal');
+    const user = await h.commit();
+    const req = h.reply();
+    const variables = { stat_data: { 场景: { 回合: 2 } }, schema: {} };
+    const payload = { 规则版本: 2, 请求ID: req.id, 待判定: [], 本轮处理: req.checks.map((c, i) => ({ 检定ID: c.id, 处理: i ? '未执行' : '采用检定', 说明: '按本轮实际行动处理' })) };
+    await h.ctx.eventSource.emit('mag_command_parsed', variables, [{ op: 'add', path: '/随机指令工作台/技能判定', value: payload }], h.ctx.chat.at(-1).mes);
+    await h.ctx.eventSource.emit('mag_before_message_update', { variables }); h.data.set(3, variables);
+    assert.deepEqual(h.service.recent().reports.map(r => r.处理), ['采用检定', '未执行']);
+    h.input.value = '离开'; await h.ctx.eventSource.emit('before', 'normal'); await h.commit();
+    assert.equal(h.ctx.chat.at(-1).extra.auto_random_input.skills.results.length, 0);
+    h.reply();
+    assert.equal(h.service.recent().turn.request.id, user.extra.auto_random_input.skills.request.id);
+    assert.equal(h.service.recent().reports.length, 2);
+    h.ctx.chat[3].swipe_id = 1;
+    assert.equal(h.service.recent().reports.length, 0);
+    h.ctx.chat[3].swipe_id = 0; h.ctx.chat[3].mes += '修改';
+    assert.equal(h.service.recent().reports.length, 0);
+});
+
+test('changing dice during a cancelled draft discards the old DC batch without rerolling it', async t => {
+    const h = fixture(); await h.install();
+    await h.ctx.eventSource.emit('before', 'normal'); await h.commit();
+    const { variables } = await h.parse(h.reply());
+    await h.ctx.eventSource.emit('mag_before_message_update', { variables }); h.data.set(1, variables);
+    const random = t.mock.method(Math, 'random', () => 0.5);
+    h.input.value = '行动'; await h.ctx.eventSource.emit('before', 'normal');
+    assert.equal(random.mock.callCount(), 2);
+    h.ctx.chatMetadata[SKILL_SETTINGS_KEY].diceSides = 100;
+    await h.ctx.eventSource.emit('before', 'normal');
+    const message = await h.commit();
+    assert.equal(message.extra.auto_random_input.skills.results.length, 0);
+    assert.match(message.extra.auto_random_input.skills.issues.join(), /骰型已改变/);
+    assert.equal(random.mock.callCount(), 2);
+    assert.equal(message.mes.split('[随机指令工作台 · 技能检定协议 v2').length, 2);
+});
+
+test('regenerating a historical threshold batch restores the old rule once without changing its snapshot', async t => {
+    const h = fixture(); await h.install();
+    const legacy = { request: { id: 'legacy-request', diceSides: 20, mode: 'challenge', maxChecks: 1,
+        skills: [{ id: 'old-lock', name: '撬锁', value: 13 }] },
+        results: [{ skillId: 'old-lock', name: '撬锁', action: '打开旧门锁', sides: 20, value: 13, result: 12, passed: true }],
+        diceSides: 20, source: null, issues: [] };
+    const snapshot = JSON.stringify(legacy);
+    h.ctx.chat.push({ is_user: true, mes: '历史行动', extra: { auto_random_input: { block: '', display: '', rolls: [], skills: legacy } } }, { mes: '旧回复' });
+    const random = t.mock.method(Math, 'random', () => { throw Error('Historical batches must not reroll'); });
+    await h.ctx.eventSource.emit('before', 'regenerate');
+    assert.match(h.ctx.chat[0].mes, /旧版技能检定历史批次/);
+    assert.match(h.ctx.chat[0].mes, /骰点 ≤ 技能值/);
+    assert.match(h.ctx.chat[0].mes, /旧技能值 13/);
+    const restoredText = h.ctx.chat[0].mes;
+    await h.ctx.eventSource.emit('before', 'regenerate');
+    assert.equal(h.ctx.chat[0].mes, restoredText);
+    assert.equal(JSON.stringify(h.ctx.chat[0].extra.auto_random_input.skills), snapshot);
+    assert.equal(random.mock.callCount(), 0);
 });
