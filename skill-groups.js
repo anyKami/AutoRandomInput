@@ -95,13 +95,11 @@ export function createSkillTemplateGroup(templateId) {
         skills: template.skills.map(name => ({ name, value: defaultSkillValue(20) })) });
 }
 
-export function addSkillTemplates(library, ids = SKILL_TEMPLATES.map(item => item.id)) {
-    const groups = ids.map(createSkillTemplateGroup);
-    for (const group of groups) {
-        group.name = uniqueSkillGroupName(library, group.name);
-        library.groups.push(group);
-    }
-    return groups;
+export function addSkillTemplate(library, templateId) {
+    const group = createSkillTemplateGroup(templateId);
+    group.name = uniqueSkillGroupName(library, group.name);
+    library.groups.push(group);
+    return group;
 }
 
 export function loadSkillGroup(current, group) {

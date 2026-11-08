@@ -1,7 +1,7 @@
 {
   "display_name": "随机指令",
   "description": "随机指令工作台 2.1：MVU 通用技能检定、可复用技能配置组与 5e、日常、修仙等 12 套技能样板。",
-  "version": "2.1.2",
+  "version": "2.1.3",
   "author": "anyKami",
   "homepage": "https://github.com/anyKami/AutoRandomInput",
   "loading_order": 30,

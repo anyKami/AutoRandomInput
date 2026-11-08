@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { normalizeSkillSettings, createSkillTurn, validateSelection, readSkillSelection, replyFingerprint } from '../skills.js';
-import { DND5E_SKILLS, SKILL_TEMPLATES, addSkillTemplates, createSkillTemplateGroup, normalizeSkillGroups, createSkillGroup, create5eSkillGroup, loadSkillGroup,
+import { DND5E_SKILLS, SKILL_TEMPLATES, addSkillTemplate, createSkillTemplateGroup, normalizeSkillGroups, createSkillGroup, create5eSkillGroup, loadSkillGroup,
     saveSkillGroup, skillGroupMatches, uniqueSkillGroupName } from '../skill-groups.js';
 
 const sheet = () => normalizeSkillSettings({ enabled: true, diceSides: 100, mode: 'every', maxChecks: 3,
@@ -130,16 +130,15 @@ test('all 12 genre templates have distinct valid skills and independent editable
     assert.throws(() => createSkillTemplateGroup('missing'), RangeError);
 });
 
-test('bulk add preserves existing content, names copies uniquely and validates before mutating', () => {
+test('adding a selected template preserves existing content, names copies uniquely and rejects unknown templates', () => {
     const library = { groups: [createSkillGroup('日常', sheet())] };
     const original = JSON.stringify(library.groups[0]);
-    const added = addSkillTemplates(library);
-    assert.equal(library.groups.length, 13);
-    assert.equal(added.length, 12);
-    assert.equal(added.find(g => g.name.startsWith('日常')).name, '日常 2');
+    const added = addSkillTemplate(library, 'daily');
+    assert.equal(library.groups.length, 2);
+    assert.equal(added.name, '日常 2');
     assert.equal(JSON.stringify(library.groups[0]), original);
-    assert.equal(new Set(library.groups.map(g => g.id)).size, 13);
+    assert.equal(new Set(library.groups.map(g => g.id)).size, 2);
     const before = JSON.stringify(library);
-    assert.throws(() => addSkillTemplates(library, ['daily', 'missing']), RangeError);
+    assert.throws(() => addSkillTemplate(library, 'missing'), RangeError);
     assert.equal(JSON.stringify(library), before);
 });

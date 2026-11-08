@@ -1,6 +1,6 @@
 import { SKILL_SETTINGS_KEY, defaultSkillValue, newSkillId, normalizeSkillSettings, randomizeSkillValues,
     recommendedPointLimit, skillErrors, skillPointTotal } from './skills.js';
-import { SKILL_GROUPS_KEY, SKILL_TEMPLATES, addSkillTemplates, createSkillGroup, loadSkillGroup, saveSkillGroup,
+import { SKILL_GROUPS_KEY, SKILL_TEMPLATES, addSkillTemplate, createSkillGroup, loadSkillGroup, saveSkillGroup,
     skillGroupMatches, uniqueSkillGroupName } from './skill-groups.js';
 
 export function mountSkillUI(dialog, getContext, service) {
@@ -194,14 +194,11 @@ export function mountSkillUI(dialog, getContext, service) {
         $('#ari-skill-template-note').textContent = SKILL_TEMPLATES.find(item => item.id === templateSelect.value)?.description ?? '';
     };
     templateSelect.addEventListener('change', refreshTemplate); refreshTemplate();
-    const addTemplates = ids => {
+    $('#ari-add-skill-template').addEventListener('click', () => {
         if (!isCurrent()) return;
-        const groups = addSkillTemplates(library(), ids);
-        const selected = groups[Math.max(0, ids.indexOf(templateSelect.value))];
+        const selected = addSkillTemplate(library(), templateSelect.value);
         saveLibrary(); applyGroup(selected);
-    };
-    $('#ari-add-skill-template').addEventListener('click', () => addTemplates([templateSelect.value]));
-    $('#ari-add-all-skill-templates').addEventListener('click', () => addTemplates(SKILL_TEMPLATES.map(item => item.id)));
+    });
     $('#ari-skills-enabled').addEventListener('change', event => { store().enabled = event.target.checked; save(); refresh(); });
     $('#ari-skills-dice').addEventListener('change', event => { store().diceSides = Number(event.target.value); save(); renderRows(); refresh(); });
     $('#ari-skills-mode').addEventListener('change', event => { store().mode = event.target.value; save(); refresh(); });

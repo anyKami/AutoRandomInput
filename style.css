@@ -83,6 +83,7 @@ body:has(#ari-workbench[open]) { overflow: hidden; }
 #ari-workbench .ari-group-actions button { font-size: 12px; background: transparent; color: var(--ari-muted); }
 #ari-workbench .ari-group-actions button:first-child { color: var(--ari-accent); }
 #ari-workbench .ari-group-actions .ari-sample-button { grid-column: 1 / -1; color: var(--ari-accent); border-style: dashed; }
+#ari-workbench #ari-add-skill-template { grid-column: 1 / -1; }
 #ari-group-form { padding: 12px; margin-top: 10px; background: var(--ari-panel); border: 1px solid var(--ari-border); border-radius: 10px; }
 #ari-group-form label { display: block; margin-bottom: 8px; overflow-wrap: anywhere; }
 #ari-workbench #ari-group-error { color: var(--ari-error); font-size: 12px; margin: 6px 0; }
