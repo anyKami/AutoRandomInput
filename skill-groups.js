@@ -1,4 +1,4 @@
-import { defaultSkillValue, newSkillId, normalizeSkillSettings, skillErrors } from './skills.js';
+import { defaultSkillModifier, newSkillId, normalizeSkillSettings, skillErrors, SKILL_VERSION } from './skills.js';
 
 export const SKILL_GROUPS_KEY = 'auto_random_input_skill_groups';
 // D&D 5e Basic Rules, chapter 7, Skills. This is the skill roster, not a DC rules engine.
@@ -9,7 +9,7 @@ export const DND5E_SKILLS = [
 ];
 
 export const SKILL_TEMPLATES = [
-    { id: 'dnd5e', name: '5e 标准技能', description: '5e 的 18 项标准技能清单。数值为本插件的成功阈值，不是 5e 的技能加值。', skills: DND5E_SKILLS },
+    { id: 'dnd5e', name: '5e 标准技能', description: '5e 的 18 项标准技能清单，使用本插件自定义的加值、预算和 DC 检定配置，不自动计算职业熟练加值。', skills: DND5E_SKILLS },
     { id: 'daily', name: '日常', description: '生活自理、人际沟通、工作学习与常见突发状况。', skills: [
         '烹饪', '家务整理', '生活规划', '理财预算', '购物议价', '社交沟通', '察言观色', '情绪调节', '时间管理', '记忆学习',
         '运动健身', '驾驶出行', '生活维修', '电子设备', '信息检索', '医疗急救', '照顾他人', '手工制作', '艺术表达', '环境观察',
@@ -58,8 +58,10 @@ export const SKILL_TEMPLATES = [
 
 function snapshot(source) {
     const config = normalizeSkillSettings(source);
-    return { diceSides: config.diceSides, mode: config.mode, maxChecks: config.maxChecks, pointLimit: config.pointLimit,
-        skills: config.skills.map(skill => ({ ...skill })) };
+    return { version: SKILL_VERSION, diceSides: config.diceSides, mode: config.mode, maxChecks: config.maxChecks,
+        pointLimitMode: config.pointLimitMode, pointLimit: config.pointLimit,
+        skills: config.skills.map(skill => ({ ...skill })),
+        ...(config.migrationSnapshot ? { migrationSnapshot: config.migrationSnapshot } : {}) };
 }
 
 export function normalizeSkillGroups(value) {
@@ -70,7 +72,7 @@ export function normalizeSkillGroups(value) {
         ids.add(group.id);
         groups.push({ id: group.id, name: group.name.trim(), ...snapshot(group) });
     }
-    return { version: 1, groups };
+    return { version: SKILL_VERSION, groups };
 }
 
 export function uniqueSkillGroupName(library, base) {
@@ -91,8 +93,8 @@ export function create5eSkillGroup() {
 export function createSkillTemplateGroup(templateId) {
     const template = SKILL_TEMPLATES.find(item => item.id === templateId);
     if (!template) throw new RangeError('未知的技能样板。');
-    return createSkillGroup(template.name, { diceSides: 20, mode: 'challenge', maxChecks: 1,
-        skills: template.skills.map(name => ({ name, value: defaultSkillValue(20) })) });
+    return createSkillGroup(template.name, { version: SKILL_VERSION, diceSides: 20, mode: 'challenge', maxChecks: 1,
+        skills: template.skills.map(name => ({ name, modifier: defaultSkillModifier(20) })) });
 }
 
 export function addSkillTemplate(library, templateId) {
@@ -103,9 +105,10 @@ export function addSkillTemplate(library, templateId) {
 }
 
 export function loadSkillGroup(current, group) {
-    return normalizeSkillSettings({ ...current, ...snapshot(group), groupId: group.id,
+    const next = snapshot(group);
+    return normalizeSkillSettings({ ...current, ...next, groupId: group.id,
         // Loading is an explicit change of sheet. Never consume the old sheet's pending checks.
-        skills: group.skills.map(skill => ({ ...skill, id: newSkillId() })) });
+        skills: next.skills.map(skill => ({ ...skill, id: newSkillId() })) });
 }
 
 export function saveSkillGroup(library, groupId, current) {
@@ -119,7 +122,11 @@ export function saveSkillGroup(library, groupId, current) {
 
 export function skillGroupMatches(current, group) {
     if (!group) return false;
-    const fields = config => ({ diceSides: config.diceSides, mode: config.mode, maxChecks: config.maxChecks, pointLimit: config.pointLimit,
-        skills: config.skills.map(({ name, value }) => ({ name, value })) });
+    const fields = value => {
+        const config = normalizeSkillSettings(value);
+        return { diceSides: config.diceSides, mode: config.mode, maxChecks: config.maxChecks,
+            pointLimitMode: config.pointLimitMode, pointLimit: config.pointLimit,
+            skills: config.skills.map(({ name, modifier }) => ({ name, modifier })) };
+    };
     return JSON.stringify(fields(current)) === JSON.stringify(fields(group));
 }

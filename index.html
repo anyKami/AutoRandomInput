@@ -5,7 +5,7 @@
         <path d="M20 2 38 13v18L20 42 2 31V13L20 2Z M2 13l18 10 18-10 M20 23v19 M20 2v21" />
         <circle cx="20" cy="23" r="3" />
       </svg>
-      <div><span class="ari-eyebrow">AUTO RANDOM INPUT</span><h2 id="ari-title">随机指令工作台 2.2</h2></div>
+      <div><span class="ari-eyebrow">AUTO RANDOM INPUT</span><h2 id="ari-title">随机指令工作台 2.3</h2></div>
     </div>
     <div class="ari-header-actions">
       <select id="ari-theme" aria-label="界面主题" title="界面背景主题"></select>
@@ -101,7 +101,7 @@
         <p id="ari-skill-template-note" class="ari-skill-note"></p>
         <p id="ari-skill-group-status" class="ari-skill-note" role="status"></p>
         <p class="ari-skill-note">配置组可跨聊天复用。编辑只自动保存当前聊天，点击「保存到组」更新模板。切换或重新载入会替换当前技能表。</p>
-        <p class="ari-skill-note">样板默认 d20，每项初值 13；总上限为全部单项上限的 2/3。可自由增删修改。</p>
+        <p class="ari-skill-note">样板默认 d20，每项加值 +3；默认总预算为技能数 × 3。可自由增删修改。</p>
         <form id="ari-skill-group-form" class="ari-skill-group-form" hidden>
           <label id="ari-skill-group-form-label" for="ari-skill-group-name">技能配置组名称</label>
           <input id="ari-skill-group-name" type="text" maxlength="60" autocomplete="off">
@@ -116,23 +116,24 @@
         <label for="ari-skills-mode">判定频率<select id="ari-skills-mode"><option value="challenge">有明确挑战时</option><option value="every">每轮判定</option></select></label>
         <label for="ari-skills-max">每轮检定上限<select id="ari-skills-max"><option value="1">1</option><option value="2">2</option><option value="3">3</option></select></label>
       </div>
-      <p class="ari-skill-note">AI 在上限内选择技能，各项独立投骰。是否采用每项结果，由 AI 根据你的最新行动决定。</p>
+      <p class="ari-skill-note">AI 预定事件、条件和 DC，各项独立投骰。实际难度变化时不套用旧检定，由 AI 决定延后或叙事结算。</p>
       <section class="ari-last-roll"><span class="ari-eyebrow">等待下一轮检定</span><div id="ari-skill-pending" class="ari-skill-result-list"></div><p id="ari-skill-pending-note" class="ari-skill-note"></p></section>
     </aside>
     <section class="ari-editor" aria-labelledby="ari-skills-title">
       <div class="ari-editor-heading"><div><span class="ari-eyebrow">PROTAGONIST SKILLS</span><h3 id="ari-skills-title">主角技能</h3></div><span class="ari-save-status"><span></span>当前聊天自动保存</span></div>
       <p id="ari-skill-range" class="ari-skill-note"></p>
-      <label class="ari-section-label" for="ari-skill-point-limit">总能力值上限</label>
-      <div class="ari-point-controls"><input id="ari-skill-point-limit" type="number" min="0" step="1" aria-label="总能力值上限"><button id="ari-use-point-suggestion" type="button">采用推荐值</button><button id="ari-randomize-skills" type="button">随机分配技能值</button></div>
+      <p id="ari-skill-migration-note" class="ari-skill-note" hidden>已升级为加值与 DC 检定：旧技能值已重设为默认加值，原配置快照已保留；之后的编辑不会被再次重置。</p>
+      <label class="ari-section-label" for="ari-skill-point-limit">总加值预算</label>
+      <div class="ari-point-controls"><input id="ari-skill-point-limit" type="number" min="0" step="1" aria-label="总加值预算"><button id="ari-use-point-suggestion" type="button">使用推荐值</button><button id="ari-randomize-skills" type="button">随机分配加值</button></div>
       <p id="ari-skill-point-total" class="ari-skill-note" role="status"></p>
       <p id="ari-skill-point-suggestion" class="ari-skill-note"></p>
-      <p class="ari-skill-note">随机分配尽量用满总点数；每项不超过骰面数。总上限高于「技能数 × 骰面数」时，用不完的点数会保留。</p>
-      <div class="ari-skill-row ari-skill-table-heading"><span>技能名称</span><span>技能值</span><span></span></div>
+      <p class="ari-skill-note">随机分配允许负加值，尽量用满净预算，每项遵守上下限。预算高于「技能数 × 骰面数」时，剩余点数保留。</p>
+      <div class="ari-skill-row ari-skill-table-heading"><span>技能名称</span><span>技能加值</span><span></span></div>
       <div id="ari-skills-grid"></div>
       <p id="ari-skills-empty" class="ari-skill-note">添加主角拥有的技能，让 AI 按剧情选择下一轮需要检定的项目。</p>
       <button id="ari-add-skill" type="button" class="ari-skill-add">＋ 添加技能</button>
       <p id="ari-skills-errors" class="ari-skill-errors" role="alert" hidden></p>
-      <section class="ari-skill-history"><h3>最近一次检定</h3><p class="ari-skill-note">以下是本地骰点；AI 会逐项判断是否与本轮行动相关。</p><div id="ari-skill-results" class="ari-skill-result-list" aria-live="polite"></div><p id="ari-skill-last-note" class="ari-skill-note"></p></section>
+      <section class="ari-skill-history"><h3>最近一次检定</h3><p class="ari-skill-note">候选成败由本地计算；只有 AI 回报「采用检定」后，才是对应行动的检定结果。</p><div id="ari-skill-results" class="ari-skill-result-list" aria-live="polite"></div><p id="ari-skill-last-note" class="ari-skill-note"></p></section>
     </section>
   </div>
 
