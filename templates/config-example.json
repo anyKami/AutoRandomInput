@@ -1,0 +1,43 @@
+{
+  "format": "auto-random-input",
+  "formatVersion": 1,
+  "randomGroups": [
+    {
+      "name": "剧情示例",
+      "rules": [
+        {
+          "name": "叙事节奏",
+          "enabled": true,
+          "diceSides": 2,
+          "commands": [
+            "适当加快节奏，推动情节发展。",
+            "适当放慢节奏，细致描写人物互动。"
+          ]
+        },
+        {
+          "name": "偶遇事件",
+          "enabled": true,
+          "diceSides": 100,
+          "ranges": [
+            { "range": "1-20", "command": "引入一位符合当前场景的访客。" },
+            { "range": "21-100", "command": "" }
+          ]
+        }
+      ]
+    }
+  ],
+  "skillGroups": [
+    {
+      "name": "探索技能",
+      "diceSides": 20,
+      "mode": "challenge",
+      "maxChecks": 1,
+      "pointLimitMode": "custom",
+      "pointLimit": 6,
+      "skills": [
+        { "name": "察觉", "modifier": 4 },
+        { "name": "隐匿", "modifier": 2 }
+      ]
+    }
+  ]
+}

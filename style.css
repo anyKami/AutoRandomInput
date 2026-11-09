@@ -231,7 +231,32 @@ body:has(#ari-workbench[open]) { overflow: hidden; }
 #ari-workbench .ari-skill-result[data-passed="false"] strong { color: var(--ari-error); }
 #ari-workbench .ari-skill-history { margin-top: 32px; padding-top: 24px; border-top: 1px solid var(--ari-border); }
 #ari-workbench .ari-skill-history h3 { font-size: 19px; }
+#ari-workbench #ari-transfer-toggle { white-space: nowrap; font-size: 12px; }
+#ari-transfer-panel { flex: 1; min-height: 0; overflow-y: auto; padding: 24px; }
+#ari-workbench .ari-transfer-heading { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+#ari-workbench #ari-transfer-status { margin: 14px 0; color: var(--ari-mint); font-size: 13px; white-space: pre-wrap; overflow-wrap: anywhere; }
+#ari-workbench #ari-transfer-status[data-error="true"] { color: var(--ari-error); }
+#ari-workbench .ari-transfer-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; }
+#ari-workbench .ari-transfer-card { min-width: 0; padding: 18px; background: var(--ari-panel); border: 1px solid var(--ari-border); border-radius: 12px; }
+#ari-workbench .ari-transfer-card h4 { margin: 0 0 8px; font-size: 16px; color: var(--ari-text); }
+#ari-workbench .ari-transfer-card p { font-size: 12px; color: var(--ari-muted); margin-bottom: 12px; }
+#ari-workbench .ari-transfer-card > label { display: block; font-size: 12px; color: var(--ari-muted); margin-bottom: 6px; }
+#ari-workbench .ari-transfer-card > button { margin-top: 14px; }
+#ari-workbench .ari-transfer-actions { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0; }
+#ari-workbench .ari-transfer-library { grid-column: 1 / -1; }
+#ari-workbench .ari-transfer-library fieldset { min-width: 0; border: 1px solid var(--ari-border); border-radius: 8px; padding: 10px; margin: 0; }
+#ari-workbench .ari-transfer-library legend { color: var(--ari-muted); font-size: 12px; padding: 0 6px; }
+#ari-workbench .ari-transfer-choice { display: flex; align-items: start; gap: 8px; padding: 8px 0; font-size: 13px; cursor: pointer; overflow-wrap: anywhere; }
+#ari-workbench .ari-transfer-choice input { flex-shrink: 0; margin: 4px 0 0; accent-color: var(--ari-accent); }
+#ari-workbench #ari-import-file { display: block; width: 100%; min-width: 0; font-size: 12px; }
+#ari-workbench #ari-import-preview { padding-left: 20px; font-size: 13px; overflow-wrap: anywhere; }
+#ari-workbench #ari-import-preview:empty { display: none; }
 @media (max-width: 640px) {
+    #ari-transfer-panel { padding: 16px; }
+    #ari-workbench .ari-transfer-grid { grid-template-columns: minmax(0, 1fr); gap: 12px; }
+    #ari-workbench .ari-transfer-card { padding: 14px; }
+    #ari-workbench .ari-transfer-heading h3 { font-size: 20px; }
+    #ari-workbench .ari-header-actions { flex-wrap: wrap; }
     #ari-workbench .ari-tabs { padding: 8px 16px; }
     #ari-workbench .ari-skill-row { grid-template-columns: minmax(0, 1fr) 70px 50px; gap: 7px; }
     #ari-workbench .ari-skill-row button { padding: 7px 5px; }

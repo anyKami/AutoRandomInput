@@ -242,5 +242,5 @@ export function mountSkillUI(dialog, getContext, service) {
         $('#ari-skills-grid').lastElementChild?.querySelector('input')?.focus();
     });
     render();
-    return { render, refresh };
+    return { render, refresh, renderGroups };
 }
