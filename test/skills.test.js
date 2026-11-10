@@ -92,7 +92,8 @@ test('mixed outcomes remain snapshots and the prompt follows free use without ap
     cfg.skills[0].modifier = 1;
     assert.equal(turn.results[0].modifier, 3);
     const text = skillPrompt(turn);
-    for (const rule of ['以用户最新要求为准', '沿用、重复、修改或忽略检定', '采用检定', '每轮检定上限：3', '</JSONPatch></UpdateVariable>', '不得覆盖整个 stat_data']) assert.ok(text.includes(rule), rule);
+    for (const rule of ['以用户最新要求为准', '沿用、重复、修改或忽略检定', '采用检定', '每轮检定上限：3', '外层标签名为 UpdateVariable', '内层标签名为 JSONPatch', '不得覆盖整个 stat_data']) assert.ok(text.includes(rule), rule);
+    assert.ok(!/<\/?(?:content|UpdateVariable|JSONPatch)>/.test(text));
     assert.ok(!text.includes('旧检定均不适用'));
     assert.ok(skillBlocks(turn, false).display.includes('候选失败'));
     assert.equal(skillBlocks(turn, true).display, '');

@@ -29,7 +29,10 @@ export async function installSendHooks(getContext, onChange, getInput = () => do
     const refresh = async (current, ids, newMessageId = -1) => {
         // MESSAGE_SENT precedes addOneMessage. Older messages may also be outside the rendered page.
         for (const id of ids) {
-            if (id !== newMessageId && isRendered(id)) current.updateMessageBlock(id, current.chat[id]);
+            if (id !== newMessageId && isRendered(id)) {
+                current.updateMessageBlock(id, current.chat[id]);
+                await current.eventSource.emit(current.eventTypes.MESSAGE_UPDATED ?? 'message_updated', id);
+            }
         }
         onChange();
         if (ids.length) await current.saveChat();

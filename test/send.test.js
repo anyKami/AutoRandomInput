@@ -19,7 +19,7 @@ function host() {
     const rendered = new Set();
     const ctx = {
         chat: [], extensionSettings: { [SETTINGS_KEY]: settings },
-        eventTypes: { GENERATION_AFTER_COMMANDS: 'before', MESSAGE_SENT: 'sent', CHAT_CHANGED: 'chat' },
+        eventTypes: { GENERATION_AFTER_COMMANDS: 'before', MESSAGE_SENT: 'sent', CHAT_CHANGED: 'chat', MESSAGE_UPDATED: 'updated' },
         eventSource: {
             on(type, fn) { const list = listeners.get(type) ?? []; list.push(fn); listeners.set(type, list); },
             makeFirst(type, fn) { const list = listeners.get(type) ?? []; list.unshift(fn); listeners.set(type, list); },
@@ -215,12 +215,18 @@ test('history cleanup waits for an actual new message and preserves recall text'
     processMessage(h.ctx.chat, 0, h.settings, () => 0);
     old.mes += '\n<recall>旧召回</recall>';
     const before = old.mes;
+    const notifications = [];
+    h.ctx.eventSource.on('updated', id => {
+        assert.ok(h.updated.includes(id));
+        notifications.push(id);
+    });
     await h.install();
     await h.before();
     assert.equal(old.mes, before);
     await h.commit();
     assert.equal(old.mes, '旧用户输入\n<recall>旧召回</recall>');
     assert.deepEqual(h.updated, [0]);
+    assert.deepEqual(notifications, [0]);
 });
 
 test('unrendered history is cleaned and saved without refreshing absent DOM nodes', async t => {
