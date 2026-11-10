@@ -1,6 +1,6 @@
 import { SKILL_FIELD, SKILL_NAMESPACE, SKILL_PATH, SKILL_SETTINGS_KEY, createSkillTurn, isObject, normalizeSkillSettings,
-    readSkillSelection, replyFingerprint, requestBefore, skillBlocks, skillErrors, unwrap, validateSelection,
-    SKILL_VERSION, packetMatchesReply, skillPacket } from './skills.js';
+    readSkillSelection, requestBefore, skillBlocks, skillErrors, unwrap, validateSelection,
+    SKILL_VERSION, skillPacket } from './skills.js';
 
 export function mvuApi(host = globalThis) {
     if (typeof host.Mvu?.getMvuData === 'function') return host.Mvu;
@@ -65,9 +65,9 @@ export function installSkillService(getContext, onChange = () => {}, host = glob
             if (message.is_user) break;
             let packet;
             try { packet = skillPacket(api?.getMvuData({ type: 'message', message_id: i })); } catch { continue; }
-            if (packet?.规则版本 === SKILL_VERSION && packetMatchesReply(packet, turn.request, message, i)) {
+            if (isObject(packet)) {
                 const checked = validateSelection(packet, turn.request);
-                return { turn, reports: checked.本轮处理, issues: [...new Set([...(packet.issues ?? []), ...checked.issues])] };
+                return { turn, reports: checked.本轮处理, issues: checked.issues };
             }
         }
         return { turn, reports: [], issues: ['等待该次检定对应的 AI 回复回报采用情况。'] };
@@ -82,14 +82,14 @@ export function installSkillService(getContext, onChange = () => {}, host = glob
         while (index >= 0 && ctx.chat[index]?.is_system) index--;
         try { if (api && index >= 0) data = api.getMvuData({ type: 'message', message_id: index }); }
         catch { lastError = '读取 MVU 变量失败。'; }
-        const ready = !!api && isObject(data?.stat_data) && data.schema !== undefined;
+        const ready = !!api && isObject(data?.stat_data);
         const selection = ready ? readSkillSelection(ctx.chat, data, config, beforeId)
             : { checks: [], issues: ['等待 MVU 初始化当前聊天变量。'] };
         return { config, ready, errors, selection, error: lastError };
     };
     const prepare = (record, beforeId, random = Math.random) => {
         const state = view(beforeId);
-        if (!state.config.enabled || state.errors.length) return record;
+        if (!state.config.enabled) return record;
         const turn = createSkillTurn(state.config, state.selection, random);
         const blocks = skillBlocks(turn, getContext().extensionSettings.auto_random_input.stealthMode);
         return { ...record, skills: turn, block: record.block + blocks.block, display: record.display + blocks.display };
@@ -114,42 +114,53 @@ export function installSkillService(getContext, onChange = () => {}, host = glob
         // Previous message data also passes through the card schema. Detach our inherited
         // field so strict schemas cannot reject it before the new selection is merged back.
         const inherited = unwrap(variables.stat_data?.[SKILL_NAMESPACE]);
+        const previous = unwrap(inherited?.[SKILL_FIELD]);
         if (isObject(inherited) && Object.hasOwn(inherited, SKILL_FIELD)) {
             delete inherited[SKILL_FIELD];
             if (!Object.keys(inherited).length) delete variables.stat_data[SKILL_NAMESPACE];
         }
-        const owned = commands.filter(command => {
+        const owned = [];
+        for (let i = 0; i < commands.length;) {
+            const command = commands[i];
             const path = commandPath(command);
-            return path === SKILL_PATH || path.startsWith(SKILL_PATH + '.');
-        });
-        // Remove only our commands before the card's Zod schema processes the other variables.
-        for (let i = commands.length - 1; i >= 0; i--) if (owned.includes(commands[i])) commands.splice(i, 1);
-        if (!settings().enabled) return;
+            if (path === SKILL_NAMESPACE && ['set', 'replace', 'insert', 'add'].includes(command.type ?? command.op)) {
+                let value;
+                try { value = parseValue(command.value ?? command.args?.at(-1)); } catch { i++; continue; }
+                if (!isObject(value) || !Object.hasOwn(value, SKILL_FIELD)) { i++; continue; }
+                const { [SKILL_FIELD]: packet, ...rest } = value;
+                owned.push({ op: 'set', path: SKILL_PATH, value: unwrap(packet) });
+                if (Object.keys(rest).length) {
+                    if (Object.hasOwn(command, 'value')) command.value = typeof command.value === 'string' ? JSON.stringify(rest) : rest;
+                    if (command.args) command.args = [...command.args.slice(0, -1), JSON.stringify(rest)];
+                    i++; continue;
+                }
+            } else if (path === SKILL_PATH || path.startsWith(SKILL_PATH + '.')) owned.push(command);
+            else { i++; continue; }
+            // Keep card commands and any sibling fields in a parent namespace write.
+            commands.splice(i, 1);
+        }
         const ctx = getContext();
-        const index = ctx.chat.findLastIndex(message => !message.is_user && !message.is_system && typeof message.mes === 'string' &&
-            replyFingerprint(message.mes) === replyFingerprint(content));
-        if (index < 0) return;
-        const message = ctx.chat[index];
-        const request = requestBefore(ctx.chat, index);
-        if (!request) return;
-        let value;
+        const index = ctx.chat.findLastIndex(message => !message.is_user && !message.is_system &&
+            (message.mes === content || message.swipes?.includes(content)));
+        const request = requestBefore(ctx.chat, index < 0 ? ctx.chat.length : index) ?? settings();
+        let value = previous;
         for (const command of owned) {
             if (commandPath(command) !== SKILL_PATH || !['set', 'replace', 'insert', 'add'].includes(command.type ?? command.op)) continue;
             try { value = parseValue(command.value ?? command.args?.at(-1)); }
-            catch { lastError = '技能选择须使用合法 JSON 对象；本轮无效选择已跳过。'; }
+            catch { lastError = '技能判定不是可读取的 JSON，请检查 MVU 内容。'; }
         }
+        if (!isObject(value)) return;
         const packet = validateSelection(value, request);
-        packet._source = { messageId: index, swipeId: message.swipe_id ?? 0, fingerprint: replyFingerprint(content) };
-        frames.set(variables, { chat: ctx.chat, message, packet });
+        packet._source = owned.length ? { messageId: index, swipeId: ctx.chat[index]?.swipe_id ?? 0 } : previous?._source;
+        frames.set(variables, { chat: ctx.chat, packet });
     };
     const beforeWrite = context => {
         const frame = frames.get(context?.variables);
         if (!frame) return;
         frames.delete(context.variables);
         const ctx = getContext();
-        const { packet, message } = frame;
-        if (ctx.chat !== frame.chat || ctx.chat[packet._source.messageId] !== message ||
-            (message.swipe_id ?? 0) !== packet._source.swipeId || replyFingerprint(message.mes) !== packet._source.fingerprint) return;
+        const { packet } = frame;
+        if (ctx.chat !== frame.chat) return;
         // This event follows the card's Zod validation. Preserve all non-owned fields.
         if (!writePacket(context.variables, packet)) lastError = 'MVU 中的随机指令工作台字段不是对象，未覆盖原值。';
         else lastError = '';
