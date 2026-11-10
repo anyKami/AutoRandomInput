@@ -74,6 +74,7 @@ export function mountConfigTransferUI(dialog, getContext, onImport) {
         $('.ari-tabs').hidden = true;
         $('#ari-random-panel').hidden = true;
         $('#ari-skills-panel').hidden = true;
+        $('#ari-settings-panel').hidden = true;
         panel.hidden = false;
         $('#ari-transfer-toggle').setAttribute('aria-expanded', 'true');
         panel.scrollTop = 0;
@@ -83,7 +84,7 @@ export function mountConfigTransferUI(dialog, getContext, onImport) {
         resetImport();
         panel.hidden = true;
         $('.ari-tabs').hidden = false;
-        for (const name of ['random', 'skills']) {
+        for (const name of ['random', 'skills', 'settings']) {
             $(`#ari-${name}-panel`).hidden = $(`#ari-tab-${name}`).getAttribute('aria-selected') !== 'true';
         }
         $('#ari-transfer-toggle').setAttribute('aria-expanded', 'false');
