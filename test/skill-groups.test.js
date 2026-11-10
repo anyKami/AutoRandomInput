@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { normalizeSkillSettings, createSkillTurn, validateSelection, readSkillSelection, replyFingerprint } from '../skills.js';
+import { normalizeSkillSettings, createSkillTurn, validateSelection, readSkillSelection } from '../skills.js';
 import { DND5E_SKILLS, SKILL_TEMPLATES, addSkillTemplate, createSkillTemplateGroup, normalizeSkillGroups, createSkillGroup, create5eSkillGroup, loadSkillGroup,
     saveSkillGroup, skillGroupMatches, uniqueSkillGroupName } from '../skill-groups.js';
 
@@ -78,16 +78,17 @@ test('invalid edits cannot overwrite a saved group; changed die values are not c
     assert.throws(() => saveSkillGroup(library, 'missing', sheet()), /先选择/);
 });
 
-test('loading a group cannot reuse another sheet pending selection even with identical skill names', () => {
+test('loading a group keeps pending selections and uses the new sheet modifiers', () => {
     const current = sheet();
     const request = createSkillTurn(current, { checks: [], issues: [] }, Math.random, 'r').request;
     const chat = [{ is_user: true, extra: { auto_random_input: { skills: { request } } } }, { mes: '需要察觉', swipe_id: 0 }];
     const packet = validateSelection({ 规则版本: 2, 本轮处理: [], 请求ID: 'r', 待判定: [{ 技能名: '察觉', 对应事件: '发现跟踪者', 判定条件: '街道光线正常', DC: 50 }] }, request);
-    packet._source = { messageId: 1, swipeId: 0, fingerprint: replyFingerprint(chat[1].mes) };
     const variables = { stat_data: { 随机指令工作台: { 技能判定: packet } } };
     assert.equal(readSkillSelection(chat, variables, current).checks.length, 1);
     const next = loadSkillGroup(current, createSkillGroup('同名技能表', current));
-    assert.equal(readSkillSelection(chat, variables, next).checks.length, 0);
+    next.skills[0].modifier = 7;
+    assert.equal(readSkillSelection(chat, variables, next).checks.length, 1);
+    assert.equal(readSkillSelection(chat, variables, next).checks[0].modifier, 7);
 });
 
 test('dirty comparison ignores runtime identities and enable state, but tracks all reusable settings', () => {

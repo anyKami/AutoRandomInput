@@ -45,6 +45,63 @@ test('MVU event contract: detach inherited fields, keep card commands, merge aft
     assert.equal(h.service.view().selection.checks.length, 2);
 });
 
+test('parent namespace writes accept skill packets and preserve unrelated commands and sibling fields', async () => {
+    const h = fixture(); await h.install();
+    await h.ctx.eventSource.emit('before', 'normal'); await h.commit();
+    const req = h.reply();
+    const value = { 技能判定: { 规则版本: 2, 请求ID: req.id, 本轮处理: [], 待判定: [
+        { 技能名: '侦查', 对应事件: '观察走廊', 判定条件: '光照昏暗', DC: 14 },
+    ] } };
+    for (const command of [
+        { op: 'add', path: '/随机指令工作台', value },
+        { type: 'insert', args: ['', '"随机指令工作台"', JSON.stringify(value)] },
+        { type: 'set', args: ["'随机指令工作台'", JSON.stringify({ ...value, 其他字段: 7 })] },
+    ]) {
+        const variables = { stat_data: { 场景: { 回合: 1 } }, schema: {} };
+        const cardCommand = { type: 'set', args: ["'场景.回合'", '2'] };
+        const commands = [cardCommand, command];
+        await h.ctx.eventSource.emit('mag_command_parsed', variables, commands, h.ctx.chat.at(-1).mes);
+        assert.equal(commands[0], cardCommand);
+        if (command.type === 'set') assert.deepEqual(JSON.parse(commands[1].args.at(-1)), { 其他字段: 7 });
+        else assert.equal(commands.length, 1);
+        await h.ctx.eventSource.emit('mag_before_message_update', { variables }); h.data.set(1, variables);
+        assert.equal(h.service.view().selection.checks[0]?.dc, 14);
+    }
+});
+
+test('display extensions changing a reply between MVU parse and write do not discard its pending checks', async () => {
+    const h = fixture(); await h.install();
+    await h.ctx.eventSource.emit('before', 'normal'); await h.commit();
+    const req = h.reply();
+    h.ctx.chat.at(-1).mes = '<故事导演自检>格式完整。</故事导演自检>\n<content>\n门外有脚步。\n</content>';
+    const { variables } = await h.parse(req);
+    h.ctx.chat.at(-1).mes = '<content>\n[igs-img:1]\n门外有脚步。\n</content>';
+    await h.ctx.eventSource.emit('mag_before_message_update', { variables }); h.data.set(1, variables);
+    assert.equal(h.service.view().selection.checks.length, 2);
+    h.input.value = '尝试撬锁并侦查';
+    await h.ctx.eventSource.emit('before', 'normal');
+    const user = await h.commit();
+    assert.equal(user.extra[SETTINGS_KEY].skills.results.length, 2);
+});
+
+test('MVU omissions keep pending checks, and manually provided checks need neither a request nor a schema', async () => {
+    const h = fixture(); await h.install();
+    h.ctx.chat.push({ mes: '手动配置', swipe_id: 0 });
+    const variables = { stat_data: { 场景: {} } };
+    await h.ctx.eventSource.emit('mag_command_parsed', variables, [{ op: 'replace', path: '/随机指令工作台/技能判定', value: {
+        待判定: [{ 技能名: '侦查', DC: '14' }],
+    } }], h.ctx.chat[0].mes);
+    await h.ctx.eventSource.emit('mag_before_message_update', { variables }); h.data.set(0, variables);
+    assert.equal(h.service.view().selection.checks.length, 1);
+    await h.ctx.eventSource.emit('mag_command_parsed', variables, [], h.ctx.chat[0].mes);
+    assert.equal(variables.stat_data.随机指令工作台, undefined);
+    await h.ctx.eventSource.emit('mag_before_message_update', { variables });
+    assert.equal(h.service.view().selection.checks[0].dc, 14);
+    await h.ctx.eventSource.emit('mag_command_parsed', variables, [{ op: 'replace', path: '/随机指令工作台/技能判定', value: { 待判定: [] } }], h.ctx.chat[0].mes);
+    await h.ctx.eventSource.emit('mag_before_message_update', { variables });
+    assert.equal(h.service.view().selection.checks.length, 0);
+});
+
 test('changing swipe while a prepared send is cancelled removes only its own pending draft block', async () => {
     const h = fixture(); await h.install();
     h.input.value = '行动<!-- unrelated -->';
@@ -99,7 +156,7 @@ test('chat switch during MVU update cannot write the old frame to a different ch
     assert.equal(variables.stat_data.随机指令工作台, undefined);
 });
 
-test('loading another skill group discards cancelled draft results from the old sheet', async t => {
+test('loading another skill group refreshes the draft with current modifiers while keeping pending checks', async t => {
     const h = fixture(); await h.install();
     await h.ctx.eventSource.emit('before', 'normal'); await h.commit();
     const { variables } = await h.parse(h.reply());
@@ -113,19 +170,19 @@ test('loading another skill group discards cancelled draft results from the old 
     h.service.resetSheet();
     await h.ctx.eventSource.emit('before', 'normal');
     const message = await h.commit();
-    assert.equal(message.extra[SETTINGS_KEY].skills.results.length, 0);
-    assert.equal(random.mock.callCount(), 2);
+    assert.equal(message.extra[SETTINGS_KEY].skills.results.length, 2);
+    assert.equal(random.mock.callCount(), 4);
     assert.equal(message.mes.split('[随机指令工作台 · 技能检定协议 v2').length, 2);
 });
 
-test('an overspent point budget does not inject a skill request or roll dice', async t => {
+test('an overspent point budget remains guidance and does not block skill requests', async t => {
     const h = fixture(); await h.install();
     h.ctx.chatMetadata[SKILL_SETTINGS_KEY].pointLimit = 0;
     const random = t.mock.method(Math, 'random', () => { throw new Error('must not roll'); });
     await h.ctx.eventSource.emit('before', 'normal');
     const message = await h.commit();
-    assert.equal(message.mes, '查看门锁');
-    assert.equal(message.extra[SETTINGS_KEY].skills, undefined);
+    assert.ok(message.mes.includes('技能检定协议'));
+    assert.equal(message.extra[SETTINGS_KEY].skills.results.length, 0);
     assert.match(h.service.view().errors.join(), /超过总加值预算/);
     assert.equal(random.mock.callCount(), 0);
 });
@@ -140,7 +197,6 @@ test('JSON Patch is accepted; absent, malicious or partial commands do not produ
         await h.ctx.eventSource.emit('mag_command_parsed', variables, commands, h.ctx.chat.at(-1).mes);
         await h.ctx.eventSource.emit('mag_before_message_update', { variables }); h.data.set(1, variables);
         assert.equal(h.service.view().selection.checks.length, 0);
-        assert.ok(h.service.view().selection.issues.length);
     }
     const variables = { stat_data: { 场景: {} }, schema: {} };
     await h.ctx.eventSource.emit('mag_command_parsed', variables, [{ op: 'replace', path: '/随机指令工作台/技能判定', value: { 规则版本: 2, 本轮处理: [], 请求ID: req.id, 待判定: [{ 技能名: '撬锁', 对应事件: '开锁', 判定条件: '普通门锁与正常光照，无干扰', DC: 15 }] } }], h.ctx.chat.at(-1).mes);
@@ -168,7 +224,7 @@ test('migration persists before first send even if the skill UI has never opened
     assert.deepEqual(h.service.settings().migrationSnapshot, old);
 });
 
-test('recent adoption reports follow their own reply and swipe even after a later empty turn', async () => {
+test('recent adoption reports read the corresponding MVU data without reply-edit or swipe restrictions', async () => {
     const h = fixture(); await h.install();
     await h.ctx.eventSource.emit('before', 'normal'); await h.commit();
     const first = await h.parse(h.reply());
@@ -187,12 +243,12 @@ test('recent adoption reports follow their own reply and swipe even after a late
     assert.equal(h.service.recent().turn.request.id, user.extra.auto_random_input.skills.request.id);
     assert.equal(h.service.recent().reports.length, 2);
     h.ctx.chat[3].swipe_id = 1;
-    assert.equal(h.service.recent().reports.length, 0);
+    assert.equal(h.service.recent().reports.length, 2);
     h.ctx.chat[3].swipe_id = 0; h.ctx.chat[3].mes += '修改';
-    assert.equal(h.service.recent().reports.length, 0);
+    assert.equal(h.service.recent().reports.length, 2);
 });
 
-test('changing dice during a cancelled draft discards the old DC batch without rerolling it', async t => {
+test('changing dice during a cancelled draft uses the new die with the existing DC selection', async t => {
     const h = fixture(); await h.install();
     await h.ctx.eventSource.emit('before', 'normal'); await h.commit();
     const { variables } = await h.parse(h.reply());
@@ -203,9 +259,10 @@ test('changing dice during a cancelled draft discards the old DC batch without r
     h.ctx.chatMetadata[SKILL_SETTINGS_KEY].diceSides = 100;
     await h.ctx.eventSource.emit('before', 'normal');
     const message = await h.commit();
-    assert.equal(message.extra.auto_random_input.skills.results.length, 0);
-    assert.match(message.extra.auto_random_input.skills.issues.join(), /骰型已改变/);
-    assert.equal(random.mock.callCount(), 2);
+    assert.equal(message.extra.auto_random_input.skills.results.length, 2);
+    assert.equal(message.extra.auto_random_input.skills.results[0].sides, 100);
+    assert.equal(message.extra.auto_random_input.skills.results[0].result, 51);
+    assert.equal(random.mock.callCount(), 4);
     assert.equal(message.mes.split('[随机指令工作台 · 技能检定协议 v2').length, 2);
 });
 
