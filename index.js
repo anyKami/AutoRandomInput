@@ -4,8 +4,9 @@ import { installSkillService } from './mvu-skills.js';
 import { mountSkillUI } from './skill-ui.js';
 import { SKILL_GROUPS_KEY, normalizeSkillGroups } from './skill-groups.js';
 import { createUpdateReloader, flushBeforeReload } from './update-reload.js';
+import { mountConfigTransferUI } from './config-transfer-ui.js';
 
-const VERSION = '2.3.1';
+const VERSION = '2.4.1';
 
 const context = () => SillyTavern.getContext();
 const settings = () => context().extensionSettings[SETTINGS_KEY];
@@ -235,13 +236,17 @@ function renderCommands() {
     renderLastRoll();
 }
 
-function render() {
+function renderGroups() {
     const store = settings();
     $('#ari-group').replaceChildren(...store.groups.map(group => new Option(group.name, group.id)));
     $('#ari-group').value = store.activeGroupId;
     $('#ari-group-count').textContent = `${store.groups.length} 组`;
     $('#ari-delete-group').disabled = store.groups.length <= 1;
     $('#ari-delete-group').title = store.groups.length <= 1 ? '至少保留一个配置组' : '删除当前配置组';
+}
+
+function render() {
+    renderGroups();
     renderStatus();
     renderRules();
     renderCommands();
@@ -402,6 +407,7 @@ async function init() {
     dialog = document.getElementById('ari-workbench');
     bindUI();
     skillUI = mountSkillUI(dialog, context, skillService);
+    mountConfigTransferUI(dialog, context, () => { renderGroups(); skillUI.renderGroups(); });
     render();
     const button = document.createElement('div');
     button.id = 'ari-menu-button';

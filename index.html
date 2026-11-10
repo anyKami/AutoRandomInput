@@ -5,9 +5,10 @@
         <path d="M20 2 38 13v18L20 42 2 31V13L20 2Z M2 13l18 10 18-10 M20 23v19 M20 2v21" />
         <circle cx="20" cy="23" r="3" />
       </svg>
-      <div><span class="ari-eyebrow">AUTO RANDOM INPUT</span><h2 id="ari-title">随机指令工作台 2.3</h2></div>
+      <div><span class="ari-eyebrow">AUTO RANDOM INPUT</span><h2 id="ari-title">随机指令工作台 2.4</h2></div>
     </div>
     <div class="ari-header-actions">
+      <button id="ari-transfer-toggle" type="button" aria-expanded="false" aria-controls="ari-transfer-panel">导入 / 导出</button>
       <select id="ari-theme" aria-label="界面主题" title="界面背景主题"></select>
       <label class="ari-toggle ari-master"><input id="ari-enabled" type="checkbox"><span class="ari-switch"></span><span id="ari-enabled-label">自动投掷已关闭</span></label>
       <button id="ari-close" class="ari-icon-button" type="button" aria-label="关闭工作台">×</button>
@@ -136,6 +137,36 @@
       <section class="ari-skill-history"><h3>最近一次检定</h3><p class="ari-skill-note">候选成败由本地计算；只有 AI 回报「采用检定」后，才是对应行动的检定结果。</p><div id="ari-skill-results" class="ari-skill-result-list" aria-live="polite"></div><p id="ari-skill-last-note" class="ari-skill-note"></p></section>
     </section>
   </div>
+
+  <section id="ari-transfer-panel" aria-labelledby="ari-transfer-title" hidden>
+    <div class="ari-transfer-heading"><div><span class="ari-eyebrow">CONFIGURATION FILES</span><h3 id="ari-transfer-title">导入 / 导出</h3></div><button id="ari-transfer-back" type="button">返回编辑</button></div>
+    <p id="ari-transfer-status" role="status" aria-live="polite"></p>
+    <div class="ari-transfer-grid">
+      <section class="ari-transfer-card">
+        <h4>导出当前配置</h4>
+        <p id="ari-export-current-note"></p>
+        <label for="ari-export-name">导出名称</label>
+        <input id="ari-export-name" type="text" autocomplete="off">
+        <button id="ari-export-current" class="ari-primary" type="button">导出当前配置</button>
+      </section>
+      <section class="ari-transfer-card">
+        <h4>导入配置文件</h4>
+        <p>选择 JSON 文件，预览后作为新组加入配置库。重名自动加序号。</p>
+        <label for="ari-import-file">配置文件</label>
+        <input id="ari-import-file" type="file" accept=".json,application/json">
+        <ul id="ari-import-preview"></ul>
+        <div id="ari-import-actions" class="ari-transfer-actions" hidden><button id="ari-import-cancel" type="button">取消导入</button><button id="ari-import-confirm" class="ari-primary" type="button">导入为新组</button></div>
+        <button id="ari-download-template" type="button">下载示例模板</button>
+      </section>
+      <section class="ari-transfer-card ari-transfer-library">
+        <h4>选择配置组导出</h4>
+        <p>这里导出组库保存版本，不包含当前聊天尚未保存到组的技能修改。</p>
+        <div class="ari-transfer-actions"><button id="ari-export-all" type="button">全选</button><button id="ari-export-none" type="button">全不选</button></div>
+        <div class="ari-transfer-grid"><fieldset><legend>随机指令组</legend><div id="ari-export-random-list"></div></fieldset><fieldset><legend>技能配置组</legend><div id="ari-export-skills-list"></div></fieldset></div>
+        <button id="ari-export-selected" class="ari-primary" type="button">导出选中的配置组</button>
+      </section>
+    </div>
+  </section>
 
   <footer class="ari-footer"><span><span class="ari-status-dot"></span>每次发送更新本轮指令；技能检定按当前聊天独立保存。</span><span class="ari-escape-hint"><kbd>Esc</kbd> 关闭</span></footer>
 </dialog>
