@@ -5,11 +5,10 @@
         <path d="M20 2 38 13v18L20 42 2 31V13L20 2Z M2 13l18 10 18-10 M20 23v19 M20 2v21" />
         <circle cx="20" cy="23" r="3" />
       </svg>
-      <div><span class="ari-eyebrow">AUTO RANDOM INPUT</span><h2 id="ari-title">随机指令工作台 2.4</h2></div>
+      <div><span class="ari-eyebrow">AUTO RANDOM INPUT</span><h2 id="ari-title">随机指令工作台 3.0</h2></div>
     </div>
     <div class="ari-header-actions">
       <button id="ari-transfer-toggle" type="button" aria-expanded="false" aria-controls="ari-transfer-panel">导入 / 导出</button>
-      <select id="ari-theme" aria-label="界面主题" title="界面背景主题"></select>
       <label class="ari-toggle ari-master"><input id="ari-enabled" type="checkbox"><span class="ari-switch"></span><span id="ari-enabled-label">自动投掷已关闭</span></label>
       <button id="ari-close" class="ari-icon-button" type="button" aria-label="关闭工作台">×</button>
     </div>
@@ -18,9 +17,11 @@
   <nav class="ari-tabs" role="tablist" aria-label="工作台功能">
     <button id="ari-tab-random" type="button" role="tab" aria-selected="true" aria-controls="ari-random-panel">随机指令</button>
     <button id="ari-tab-skills" type="button" role="tab" aria-selected="false" aria-controls="ari-skills-panel" tabindex="-1">技能检定</button>
+    <button id="ari-tab-settings" type="button" role="tab" aria-selected="false" aria-controls="ari-settings-panel" tabindex="-1">设置</button>
   </nav>
   <div id="ari-random-panel" class="ari-layout" role="tabpanel" aria-labelledby="ari-tab-random">
     <aside class="ari-sidebar" aria-label="随机配置">
+      <button id="ari-generate-random" type="button" class="ari-primary ari-generate-entry">✦ 神谕生成</button>
       <section class="ari-group-section">
         <label class="ari-section-label" for="ari-group">配置组 <span id="ari-group-count"></span></label>
         <select id="ari-group" aria-label="当前配置组"></select>
@@ -46,10 +47,6 @@
       </section>
 
       <section class="ari-options-section">
-        <label class="ari-toggle"><span>隐身发送</span><input id="ari-stealth" type="checkbox"><span class="ari-switch"></span></label>
-        <p id="ari-mode-hint">命令会显示在聊天正文末尾。</p>
-        <label class="ari-toggle ari-result-toggle"><span>附上投掷结果</span><input id="ari-include-result" type="checkbox"><span class="ari-switch"></span></label>
-        <p class="ari-option-hint">在每条命令后附上「d6 = 4」等结果。</p>
         <div class="ari-last-roll" aria-live="polite">
           <span class="ari-eyebrow">最近一次投掷</span>
           <p id="ari-last-group">等待下一次发送</p>
@@ -81,6 +78,7 @@
 
   <div id="ari-skills-panel" class="ari-layout" role="tabpanel" aria-labelledby="ari-tab-skills" hidden>
     <aside class="ari-sidebar">
+      <button id="ari-generate-skills" type="button" class="ari-primary ari-generate-entry">✦ 神谕生成</button>
       <section class="ari-group-section">
         <label class="ari-section-label" for="ari-skill-group">技能配置组 <span id="ari-skill-group-count"></span></label>
         <select id="ari-skill-group" aria-label="技能配置组"></select>
@@ -137,6 +135,51 @@
       <section class="ari-skill-history"><h3>最近一次检定</h3><p class="ari-skill-note">候选成败由本地计算；只有 AI 回报「采用检定」后，才是对应行动的检定结果。</p><div id="ari-skill-results" class="ari-skill-result-list" aria-live="polite"></div><p id="ari-skill-last-note" class="ari-skill-note"></p></section>
     </section>
   </div>
+
+  <section id="ari-settings-panel" class="ari-page" role="tabpanel" aria-labelledby="ari-tab-settings" hidden>
+    <section class="ari-transfer-card">
+      <h3>通用设置</h3>
+      <label class="ari-oracle-field"><span>界面主题</span><select id="ari-theme" aria-label="界面主题"></select></label>
+      <label class="ari-toggle"><span>隐身发送</span><input id="ari-stealth" type="checkbox"><span class="ari-switch"></span></label>
+      <p id="ari-mode-hint">命令会显示在聊天正文末尾。</p>
+      <label class="ari-toggle"><span>附上投掷结果</span><input id="ari-include-result" type="checkbox"><span class="ari-switch"></span></label>
+      <p class="ari-skill-note">在每条普通随机命令后附上「d6 = 4」等结果。启用开关在各功能页。</p>
+    </section>
+    <section class="ari-transfer-card">
+      <h3>故事神谕</h3>
+      <p id="ari-oracle-connection" role="status"></p>
+      <button id="ari-oracle-probe" type="button">重新检测接口</button>
+      <p class="ari-skill-note">模型连接在故事神谕中配置。只有点击生成时才调用模型，每次一次；普通发送不会额外调用神谕。</p>
+    </section>
+    <section class="ari-transfer-card">
+      <h3>生成默认设置</h3>
+      <p class="ari-skill-note">对话楼层、隐藏消息与正则沿用神谕读取规则，再保留最近的指定字符数。默认只读绑定世界书中当前激活的条目。</p>
+      <div id="ari-oracle-settings" class="ari-oracle-fields"></div>
+      <p id="ari-oracle-settings-status" role="status"></p>
+      <button id="ari-oracle-reset" type="button">恢复神谕生成默认设置</button>
+    </section>
+  </section>
+
+  <section id="ari-oracle-panel" class="ari-page" aria-labelledby="ari-oracle-title" hidden>
+    <div class="ari-transfer-heading"><h3 id="ari-oracle-title">神谕生成配置</h3><button id="ari-oracle-back" type="button">返回编辑</button></div>
+    <p id="ari-oracle-capability"></p>
+    <label class="ari-oracle-field"><span>生成类型</span><select id="ari-oracle-target"><option value="random">随机指令</option><option value="skills">技能配置</option><option value="both">两者一起生成</option></select></label>
+    <label class="ari-oracle-field"><span>本次额外要求（可留空）</span><textarea id="ari-oracle-requirements" rows="3" maxlength="6000" placeholder="例如：偏重调查和人际互动，保留平静日常的可能性。"></textarea></label>
+    <details><summary>本次参数限制</summary><p class="ari-skill-note">临时调整只影响本次生成，不改变全局默认值。修改后点击重新生成；预览仍按发起时的限制校验。</p><div id="ari-oracle-constraints" class="ari-oracle-fields"></div></details>
+    <div class="ari-transfer-actions"><button id="ari-oracle-generate" class="ari-primary" type="button">生成 / 重新生成</button><button id="ari-oracle-cancel" type="button">取消本次生成</button></div>
+    <p id="ari-oracle-status" role="status" aria-live="polite"></p>
+    <p id="ari-oracle-notes" class="ari-skill-note"></p>
+    <div id="ari-oracle-preview"></div>
+    <p id="ari-oracle-validation" role="status" aria-live="polite"></p>
+    <details><summary>原始回复</summary><pre id="ari-oracle-raw"></pre></details>
+    <details><summary>本次发出的请求（仅本次窗口保留）</summary><pre id="ari-oracle-request"></pre></details>
+    <section class="ari-transfer-card">
+      <label id="ari-oracle-enable-random-label" class="ari-transfer-choice"><input id="ari-oracle-enable-random" type="checkbox"><span>应用后开启随机指令</span></label>
+      <label id="ari-oracle-enable-skills-label" class="ari-transfer-choice"><input id="ari-oracle-enable-skills" type="checkbox"><span>应用后开启技能检定</span></label>
+      <p id="ari-oracle-apply-note" class="ari-skill-note"></p>
+      <div class="ari-transfer-actions"><button id="ari-oracle-save-only" type="button" disabled>仅保存到组库</button><button id="ari-oracle-apply" class="ari-primary" type="button" disabled>保存并应用</button></div>
+    </section>
+  </section>
 
   <section id="ari-transfer-panel" aria-labelledby="ari-transfer-title" hidden>
     <div class="ari-transfer-heading"><div><span class="ari-eyebrow">CONFIGURATION FILES</span><h3 id="ari-transfer-title">导入 / 导出</h3></div><button id="ari-transfer-back" type="button">返回编辑</button></div>

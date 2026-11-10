@@ -5,8 +5,12 @@ import { mountSkillUI } from './skill-ui.js';
 import { SKILL_GROUPS_KEY, normalizeSkillGroups } from './skill-groups.js';
 import { createUpdateReloader, flushBeforeReload } from './update-reload.js';
 import { mountConfigTransferUI } from './config-transfer-ui.js';
+import { ORACLE_SETTINGS_KEY, normalizeOracleSettings } from './oracle-config.js';
+import { createOracleService } from './oracle-service.js';
+import { mountOracleSettings } from './oracle-forms.js';
+import { mountOracleUI } from './oracle-ui.js';
 
-const VERSION = '2.4.2';
+const VERSION = '3.0.1';
 
 const context = () => SillyTavern.getContext();
 const settings = () => context().extensionSettings[SETTINGS_KEY];
@@ -17,6 +21,8 @@ let groupAction = '';
 let selectedRuleId = '';
 let skillService;
 let skillUI;
+let oracleSettingsUI;
+let oracleUI;
 let appReady = false;
 let hostModule;
 const loadHost = () => hostModule ??= import('../../../../script.js');
@@ -251,6 +257,8 @@ function render() {
     renderRules();
     renderCommands();
     skillUI?.render();
+    oracleSettingsUI?.refresh();
+    oracleUI?.refreshCaps();
 }
 
 function closeGroupForm() {
@@ -308,22 +316,25 @@ function submitGroup(event) {
 }
 
 function bindUI() {
+    const tabs = ['random', 'skills', 'settings'];
     const selectTab = name => {
-        for (const tab of ['random', 'skills']) {
+        for (const tab of tabs) {
             const selected = tab === name;
             $(`#ari-tab-${tab}`).setAttribute('aria-selected', String(selected));
             $(`#ari-tab-${tab}`).tabIndex = selected ? 0 : -1;
             $(`#ari-${tab}-panel`).hidden = !selected;
         }
-        $('.ari-master').hidden = name === 'skills';
+        $('.ari-master').hidden = name !== 'random';
         if (name === 'skills') skillUI?.render();
+        if (name === 'settings') oracleSettingsUI?.refresh();
     };
-    for (const name of ['random', 'skills']) {
+    for (const name of tabs) {
         $(`#ari-tab-${name}`).addEventListener('click', () => selectTab(name));
         $(`#ari-tab-${name}`).addEventListener('keydown', event => {
             if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
             event.preventDefault();
-            const next = event.key === 'Home' ? 'random' : event.key === 'End' ? 'skills' : name === 'random' ? 'skills' : 'random';
+            const next = event.key === 'Home' ? tabs[0] : event.key === 'End' ? tabs.at(-1)
+                : tabs[(tabs.indexOf(name) + (event.key === 'ArrowRight' ? 1 : tabs.length - 1)) % tabs.length];
             selectTab(next); $(`#ari-tab-${next}`).focus();
         });
     }
@@ -389,6 +400,7 @@ async function init() {
     const ctx = context();
     ctx.extensionSettings[SETTINGS_KEY] = normalizeSettings(ctx.extensionSettings[SETTINGS_KEY]);
     ctx.extensionSettings[SKILL_GROUPS_KEY] = normalizeSkillGroups(ctx.extensionSettings[SKILL_GROUPS_KEY]);
+    ctx.extensionSettings[ORACLE_SETTINGS_KEY] = normalizeOracleSettings(ctx.extensionSettings[ORACLE_SETTINGS_KEY]);
     save();
     skillService = installSkillService(context, () => skillUI?.refresh());
     await installSendHooks(context, () => { renderLastRoll(); skillUI?.refresh(); }, undefined, undefined, skillService);
@@ -407,6 +419,9 @@ async function init() {
     dialog = document.getElementById('ari-workbench');
     bindUI();
     skillUI = mountSkillUI(dialog, context, skillService);
+    const oracleService = createOracleService(context, skillService);
+    oracleSettingsUI = mountOracleSettings(dialog, context, oracleService);
+    oracleUI = mountOracleUI(dialog, context, oracleService, skillService, () => { selectedRuleId = ''; render(); });
     mountConfigTransferUI(dialog, context, () => { renderGroups(); skillUI.renderGroups(); });
     render();
     const button = document.createElement('div');

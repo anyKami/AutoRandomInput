@@ -43,6 +43,7 @@ export function normalizeSkillSettings(value = {}) {
         pointLimitMode: legacy || value.pointLimitMode === 'auto' || !Object.hasOwn(value, 'pointLimit') ? 'auto' : 'custom',
         pointLimit: value.pointLimit,
     };
+    if (typeof value.freshSelectionSkillId === 'string' && value.freshSelectionSkillId) config.freshSelectionSkillId = value.freshSelectionSkillId;
     // Keep the original persisted sheet once. A v2 normalization never remigrates it.
     if (legacy) config.migrationSnapshot = JSON.parse(JSON.stringify(value));
     else if (isObject(value.migrationSnapshot)) config.migrationSnapshot = JSON.parse(JSON.stringify(value.migrationSnapshot));
@@ -124,7 +125,11 @@ export const skillPacket = variables => unwrap(unwrap(variables?.stat_data?.[SKI
 
 export function readSkillSelection(chat, variables, settings, beforeId = chat.length) {
     const packet = skillPacket(variables);
-    const request = requestBefore(chat, beforeId) ?? settings;
+    const previousRequest = requestBefore(chat, beforeId);
+    if (settings.freshSelectionSkillId && !previousRequest?.skills?.some(skill => skill.id === settings.freshSelectionSkillId)) {
+        return { checks: [], issues: ['已载入新的神谕技能表，下一次发送将请求新的技能选择。'], source: null };
+    }
+    const request = previousRequest ?? settings;
     const validated = validateSelection(packet, request);
     const checks = validated.待判定.slice(0, settings.maxChecks).map(item => {
         const skill = settings.skills.find(skill => skill.id === item.skillId) ?? settings.skills.find(skill => skill.name.trim() === item.技能名);
