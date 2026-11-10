@@ -164,7 +164,7 @@
     <div class="ari-transfer-heading"><h3 id="ari-oracle-title">神谕生成配置</h3><button id="ari-oracle-back" type="button">返回编辑</button></div>
     <p id="ari-oracle-capability"></p>
     <label class="ari-oracle-field"><span>生成类型</span><select id="ari-oracle-target"><option value="random">随机指令</option><option value="skills">技能配置</option><option value="both">两者一起生成</option></select></label>
-    <label class="ari-oracle-field"><span>本次额外要求（可留空）</span><textarea id="ari-oracle-requirements" rows="3" maxlength="6000" placeholder="例如：偏重调查和人际互动，保留平静日常的可能性。"></textarea></label>
+    <label class="ari-oracle-field"><span>本次额外要求（可留空）</span><textarea id="ari-oracle-requirements" rows="3" maxlength="6000" placeholder="留空时优先生成适合角色卡长期使用的配置。例如：偏重调查和人际互动，保留平静日常的可能性。"></textarea></label>
     <details><summary>本次参数限制</summary><p class="ari-skill-note">临时调整只影响本次生成，不改变全局默认值。修改后点击重新生成；预览仍按发起时的限制校验。</p><div id="ari-oracle-constraints" class="ari-oracle-fields"></div></details>
     <div class="ari-transfer-actions"><button id="ari-oracle-generate" class="ari-primary" type="button">生成 / 重新生成</button><button id="ari-oracle-cancel" type="button">取消本次生成</button></div>
     <p id="ari-oracle-status" role="status" aria-live="polite"></p>

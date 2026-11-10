@@ -10,7 +10,7 @@ import { createOracleService } from './oracle-service.js';
 import { mountOracleSettings } from './oracle-forms.js';
 import { mountOracleUI } from './oracle-ui.js';
 
-const VERSION = '3.0.1';
+const VERSION = '3.0.2';
 
 const context = () => SillyTavern.getContext();
 const settings = () => context().extensionSettings[SETTINGS_KEY];
