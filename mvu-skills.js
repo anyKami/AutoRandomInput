@@ -102,7 +102,7 @@ export function installSkillService(getContext, onChange = () => {}, host = glob
         const record = message?.extra?.auto_random_input;
         // Later sends remove old injected text, but retain the immutable skill batch.
         // Returning to that round must restore its contract without rolling again.
-        if (!record?.skills || record.block) return [];
+        if (!record?.skills || record.block || message.mes.includes(record.skills.request.id)) return [];
         const blocks = skillBlocks(record.skills, ctx.extensionSettings.auto_random_input.stealthMode);
         Object.assign(record, blocks);
         message.mes += blocks.block;

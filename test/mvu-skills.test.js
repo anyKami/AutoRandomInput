@@ -285,3 +285,34 @@ test('regenerating a historical threshold batch restores the old rule once witho
     assert.equal(JSON.stringify(h.ctx.chat[0].extra.auto_random_input.skills), snapshot);
     assert.equal(random.mock.callCount(), 0);
 });
+
+test('regenerating an existing user message notifies HTML renderers after restoring its saved skill contract', async () => {
+    const h = fixture();
+    h.ctx.eventTypes.MESSAGE_UPDATED = 'updated';
+    const lifecycle = [];
+    h.ctx.updateMessageBlock = id => lifecycle.push(`render:${id}`);
+    h.ctx.eventSource.on('updated', id => lifecycle.push(`updated:${id}`));
+    await installSendHooks(() => h.ctx, () => {}, () => h.input, () => true, h.service);
+    await h.ctx.eventSource.emit('before', 'normal');
+    const message = await h.commit();
+    const record = message.extra[SETTINGS_KEY];
+    message.mes = '继续'; record.block = ''; record.display = '';
+    await h.ctx.eventSource.emit('before', 'regenerate');
+    assert.deepEqual(lifecycle, ['render:0', 'updated:0']);
+    await h.ctx.eventSource.emit('before', 'regenerate');
+    assert.deepEqual(lifecycle, ['render:0', 'updated:0']);
+});
+
+test('regeneration reuses the protocol left inside recall after a regex edits its example tags', async () => {
+    const h = fixture(); await h.install();
+    await h.ctx.eventSource.emit('before', 'normal');
+    const message = await h.commit();
+    const record = message.extra[SETTINGS_KEY];
+    message.mes = `以下是用户的本轮输入：\n<本轮用户输入>\n${message.mes}\n</本轮用户输入>\n<recall>已有召回</recall>`
+        .replace(/<UpdateVariable>[\s\S]*?<\/UpdateVariable>/g, '');
+    record.block = ''; record.display = '';
+    const original = message.mes;
+    await h.ctx.eventSource.emit('before', 'regenerate');
+    assert.equal(message.mes, original);
+    assert.equal(message.mes.split('[随机指令工作台 · 技能检定协议 v2]').length, 2);
+});
