@@ -1,6 +1,6 @@
 {
   "name": "auto-random-input",
-  "version": "2.3.2",
+  "version": "2.4.2",
   "private": true,
   "type": "module",
   "engines": { "node": ">=20" },
