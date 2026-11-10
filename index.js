@@ -6,7 +6,7 @@ import { SKILL_GROUPS_KEY, normalizeSkillGroups } from './skill-groups.js';
 import { createUpdateReloader, flushBeforeReload } from './update-reload.js';
 import { mountConfigTransferUI } from './config-transfer-ui.js';
 
-const VERSION = '2.4.1';
+const VERSION = '2.4.2';
 
 const context = () => SillyTavern.getContext();
 const settings = () => context().extensionSettings[SETTINGS_KEY];
