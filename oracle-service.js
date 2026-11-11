@@ -29,13 +29,15 @@ export function cleanOracleText(text) {
         .replace(/\{\{\s*(?:get|set)(?:_message_)?var(?:iable)?\b[\s\S]*?\}\}/gi, '');
 }
 
-function scopeOf(ctx, automatic = false) {
-    return { chat: ctx.chat, metadata: ctx.chatMetadata,
-        key: JSON.stringify([automatic && ctx.groupId != null ? null : ctx.characterId, ctx.groupId, ctx.chatId]),
-        signature: automatic ? null : JSON.stringify((ctx.chat ?? []).map(m => [m.is_user, m.is_system, m.swipe_id, m.mes])) };
+const scopeKey = (ctx, automatic) => JSON.stringify([automatic && ctx.groupId != null ? null : ctx.characterId, ctx.groupId, ctx.chatId]);
+const chatSignature = chat => JSON.stringify((chat ?? []).map(m => [m.is_user, m.is_system, m.swipe_id, m.mes]));
+
+function scopeOf(ctx, automatic) {
+    return { chat: ctx.chat, metadata: ctx.chatMetadata, key: scopeKey(ctx, automatic),
+        signature: automatic ? null : chatSignature(ctx.chat) };
 }
-function sameScope(a, b) {
-    return a.chat === b.chat && a.metadata === b.metadata && a.key === b.key && a.signature === b.signature;
+function sameChat(scope, ctx, automatic) {
+    return scope.chat === ctx.chat && scope.metadata === ctx.chatMetadata && scope.key === scopeKey(ctx, automatic);
 }
 
 export async function collectOracleContext(api, ctx, options, host = globalThis) {
@@ -90,7 +92,10 @@ export function createOracleRequestGate() {
 export function createOracleService(getContext, skillService, host = globalThis,
     { gate = createOracleRequestGate(), automatic = false } = {}) {
     let current, draft, sequence = 0;
-    const isCurrent = scope => sameScope(scope, scopeOf(getContext(), automatic));
+    const isCurrent = scope => {
+        const ctx = getContext();
+        return sameChat(scope, ctx, automatic) && (automatic || scope.signature === chatSignature(ctx.chat));
+    };
     const cancel = () => { sequence++; current?.abort(); current = null; draft = null; };
     const valid = () => !!draft && !draft.applied && isCurrent(draft.scope);
     return {
@@ -124,7 +129,11 @@ export function createOracleService(getContext, skillService, host = globalThis,
                 const context = await collectOracleContext(api, source, options, host); check();
                 const messages = oracleMessages(target, options, requirements, context.blocks, { automatic });
                 const raw = await api.run(messages, { signal: ctl.signal, maxTokens: options.maxTokens,
-                    onDelta: full => { if (id === sequence && !ctl.signal.aborted && isCurrent(scope)) onProgress(String(full ?? '').length); } });
+                    onDelta: full => {
+                        // Progress only needs the active chat; check() validates its contents after the stream.
+                        if (id === sequence && !ctl.signal.aborted && sameChat(scope, getContext(), automatic)) onProgress(String(full ?? '').length);
+                    },
+                });
                 check();
                 draft = { id, scope, target, options, notes: context.notes, messages, raw: String(raw ?? ''), applied: false };
                 try { draft.value = parseOracleReply(raw); validateGeneratedConfig(draft.value, target, options); }
