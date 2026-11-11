@@ -118,7 +118,8 @@ export function mountOracleUI(dialog, getContext, service, skillService, onApply
     function refreshCaps() {
         const caps = service.capabilities();
         $('#ari-oracle-generate').disabled = service.busy || !caps.ready || !getContext().chat?.length;
-        $('#ari-oracle-capability').textContent = caps.ready ? `使用故事神谕 · ${caps.connection}` : '请先启用故事神谕并配置模型连接，可在设置页重新检测。';
+        $('#ari-oracle-capability').textContent = service.busy ? '神谕请求进行中，请等待完成后再生成。'
+            : caps.ready ? `使用故事神谕 · ${caps.connection}` : '请先启用故事神谕并配置模型连接，可在设置页重新检测。';
     }
     function clearDraft() {
         value = undefined; summaries = []; editor.replaceChildren(); $('#ari-oracle-raw').textContent = '';

@@ -1,4 +1,5 @@
 import { activeGroup, SETTINGS_KEY } from './core.js';
+import { effectiveRandomSettings } from './oracle-auto-state.js';
 import { SKILL_GROUPS_KEY } from './skill-groups.js';
 import { SKILL_SETTINGS_KEY } from './skills.js';
 import { importConfigBundle, parseConfigFile, previewConfigImport, serializeConfigFile } from './config-transfer.js';
@@ -62,7 +63,7 @@ export function mountConfigTransferUI(dialog, getContext, onImport) {
         const ctx = getContext();
         const config = ctx.chatMetadata?.[SKILL_SETTINGS_KEY];
         const canExport = sourceTab === 'random' || !!(ctx.chat.length && config);
-        const group = sourceTab === 'random' ? activeGroup(random()) : library().groups.find(item => item.id === config?.groupId);
+        const group = sourceTab === 'random' ? activeGroup(effectiveRandomSettings(ctx)) : library().groups.find(item => item.id === config?.groupId);
         sourceIdentity = sourceTab === 'random' ? group.id : ctx.chatMetadata;
         $('#ari-export-name').value = group?.name ?? '当前技能配置';
         $('#ari-export-name').disabled = !canExport;
@@ -109,7 +110,7 @@ export function mountConfigTransferUI(dialog, getContext, onImport) {
             if (sourceIdentity !== ctx.chatMetadata || !ctx.chat.length) throw new Error('当前聊天已切换，请重新打开导入 / 导出面板。');
             text = serializeConfigFile([], [{ ...ctx.chatMetadata[SKILL_SETTINGS_KEY], name }]);
         } else {
-            const group = activeGroup(random());
+            const group = activeGroup(effectiveRandomSettings(ctx));
             if (group.id !== sourceIdentity) throw new Error('当前配置已切换，请重新打开导入 / 导出面板。');
             text = serializeConfigFile([{ ...group, name }]);
         }

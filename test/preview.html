@@ -28,7 +28,7 @@
     <h1>AutoRandomInput · 隔离预览</h1>
     <p>模拟 SillyTavern 发送与显示接口。不会访问真实聊天或连接模型。</p>
     <div id="extensionsMenu"></div>
-    <div class="preview-controls"><button id="run-ui-tests">运行界面检查</button><button id="preview-regenerate">模拟重新生成</button><button id="preview-switch-chat" hidden>切换测试聊天</button><a href="/mobile" target="_blank">390px 手机预览</a></div>
+    <div class="preview-controls"><button id="run-ui-tests">运行界面检查</button><button id="preview-ai-reply" hidden>模拟新增 AI 楼层</button><button id="preview-regenerate">模拟重新生成</button><button id="preview-switch-chat" hidden>切换测试聊天</button><a id="preview-mobile-link" href="/mobile" target="_blank">390px 手机预览</a></div>
     <pre id="test-results" hidden></pre>
     <textarea id="send_textarea" placeholder="输入一条测试消息…">我推开酒馆的大门，环顾四周。</textarea>
     <div class="preview-controls"><button id="send_but">发送测试消息</button><label><input id="preview-recall" type="checkbox"> 模拟召回</label><span id="save-count"></span></div>

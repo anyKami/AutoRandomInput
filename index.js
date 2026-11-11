@@ -3,17 +3,18 @@ import { installSendHooks } from './send.js';
 import { installSkillService } from './mvu-skills.js';
 import { mountSkillUI } from './skill-ui.js';
 import { SKILL_GROUPS_KEY, normalizeSkillGroups } from './skill-groups.js';
-import { createUpdateReloader, flushBeforeReload } from './update-reload.js';
 import { mountConfigTransferUI } from './config-transfer-ui.js';
 import { ORACLE_SETTINGS_KEY, normalizeOracleSettings } from './oracle-config.js';
-import { createOracleService } from './oracle-service.js';
+import { createOracleService, createOracleRequestGate } from './oracle-service.js';
 import { mountOracleSettings } from './oracle-forms.js';
 import { mountOracleUI } from './oracle-ui.js';
-
-const VERSION = '3.0.2';
+import { effectiveRandomSettings, selectRandomGroup } from './oracle-auto-state.js';
+import { installAutoOracle } from './oracle-auto.js';
+import { mountAutoOracleUI } from './oracle-auto-ui.js';
 
 const context = () => SillyTavern.getContext();
 const settings = () => context().extensionSettings[SETTINGS_KEY];
+const currentGroup = () => activeGroup(effectiveRandomSettings(context()));
 const save = () => context().saveSettingsDebounced();
 let dialog;
 let initialized = false;
@@ -23,37 +24,10 @@ let skillService;
 let skillUI;
 let oracleSettingsUI;
 let oracleUI;
-let appReady = false;
-let hostModule;
-const loadHost = () => hostModule ??= import('../../../../script.js');
-const updateReloader = createUpdateReloader({
-    version: VERSION,
-    storage: (() => { try { return window.sessionStorage; } catch { return undefined; } })(),
-    readVersion: async () => {
-        const response = await fetch(new URL('./manifest.json', import.meta.url), { cache: 'no-store' });
-        if (!response.ok) throw new Error(`读取版本失败：HTTP ${response.status}`);
-        return (await response.json()).version;
-    },
-    isBusy: async () => {
-        if (!appReady) return true;
-        const host = await loadHost();
-        return (host.isGenerating?.() ?? (host.is_send_press || host.is_group_generating)) || host.isChatSaving ||
-            !!document.getElementById('send_textarea')?.value ||
-            !!document.querySelector('#ari-workbench[open],#curEditTextarea,.edit_textarea,.reasoning_edit_textarea') ||
-            !!document.activeElement?.matches('input,textarea:not(#send_textarea),select,[contenteditable="true"]');
-    },
-    flush: async () => flushBeforeReload(context, await loadHost()),
-    reload: () => window.location.reload(),
-    notify: () => globalThis.toastr?.info('插件已升级，将在生成和保存完成、草稿清空及工作台关闭后自动刷新。', '随机指令'),
-    onError: error => console.debug('[AutoRandomInput] 自动刷新暂缓，稍后重试', error),
-});
-export function onAutoRandomInputUpdate() { updateReloader.request(); }
-window.addEventListener('focus', () => { if (appReady) void updateReloader.check(); });
-document.addEventListener('visibilitychange', () => { if (appReady && !document.hidden) void updateReloader.check(); });
-window.addEventListener('pagehide', () => updateReloader.dispose(), { once: true });
+let autoOracleUI;
 const $ = selector => dialog.querySelector(selector);
 const selectedRule = () => {
-    const group = activeGroup(settings());
+    const group = currentGroup();
     return group.rules.find(rule => rule.id === selectedRuleId) ?? group.rules[0];
 };
 
@@ -99,7 +73,7 @@ function renderLastRoll() {
         list.append(item);
     }
     if (record && !rolls.length) list.textContent = '本次没有启用的指令。';
-    const group = activeGroup(settings());
+    const group = currentGroup();
     const rule = selectedRule();
     const hit = rolls.find(roll => roll.ruleId === rule.id);
     dialog.querySelectorAll('.ari-command-card, .ari-range-row').forEach(card => {
@@ -167,7 +141,7 @@ function renderRanges() {
 }
 
 function renderRules() {
-    const group = activeGroup(settings());
+    const group = currentGroup();
     $('#ari-rule-count').textContent = `${group.rules.filter(rule => rule.enabled).length}/${group.rules.length} 启用`;
     const list = $('#ari-rule-list');
     list.replaceChildren();
@@ -200,8 +174,8 @@ function renderRules() {
 function renderCommands() {
     const rule = selectedRule();
     $('#ari-rule-name').value = rule.name;
-    $('#ari-delete-rule').disabled = activeGroup(settings()).rules.length <= 1;
-    $('#ari-delete-rule').title = activeGroup(settings()).rules.length <= 1 ? '至少保留一套骰子指令' : '删除当前骰子指令';
+    $('#ari-delete-rule').disabled = currentGroup().rules.length <= 1;
+    $('#ari-delete-rule').title = currentGroup().rules.length <= 1 ? '至少保留一套骰子指令' : '删除当前骰子指令';
     $('#ari-disabled-hint').hidden = rule.enabled;
     $('#ari-sides').value = String(rule.diceSides);
     $('#ari-dice-label').textContent = `D${rule.diceSides}`;
@@ -245,7 +219,7 @@ function renderCommands() {
 function renderGroups() {
     const store = settings();
     $('#ari-group').replaceChildren(...store.groups.map(group => new Option(group.name, group.id)));
-    $('#ari-group').value = store.activeGroupId;
+    $('#ari-group').value = currentGroup().id;
     $('#ari-group-count').textContent = `${store.groups.length} 组`;
     $('#ari-delete-group').disabled = store.groups.length <= 1;
     $('#ari-delete-group').title = store.groups.length <= 1 ? '至少保留一个配置组' : '删除当前配置组';
@@ -259,6 +233,7 @@ function render() {
     skillUI?.render();
     oracleSettingsUI?.refresh();
     oracleUI?.refreshCaps();
+    autoOracleUI?.refresh();
 }
 
 function closeGroupForm() {
@@ -268,7 +243,7 @@ function closeGroupForm() {
 
 function openGroupForm(action) {
     groupAction = action;
-    const group = activeGroup(settings());
+    const group = currentGroup();
     const labels = { new: '新建配置组', copy: '复制为新配置组', rename: '重命名配置组', delete: `删除“${group.name}”？`, 'delete-rule': `删除骰子指令“${selectedRule().name}”？` };
     $('#ari-group-form-label').textContent = labels[action];
     const input = $('#ari-group-name');
@@ -286,7 +261,7 @@ function openGroupForm(action) {
 function submitGroup(event) {
     event.preventDefault();
     const store = settings();
-    const group = activeGroup(store);
+    const group = currentGroup();
     if (groupAction === 'delete-rule') {
         if (group.rules.length <= 1) return;
         group.rules = group.rules.filter(rule => rule.id !== selectedRule().id);
@@ -294,7 +269,7 @@ function submitGroup(event) {
     } else if (groupAction === 'delete') {
         if (store.groups.length <= 1) return;
         store.groups = store.groups.filter(item => item.id !== group.id);
-        store.activeGroupId = store.groups[0].id;
+        selectRandomGroup(context(), store.groups[0].id);
     } else {
         const name = $('#ari-group-name').value.trim();
         if (!name) { $('#ari-group-error').textContent = '请输入配置组名称。'; return; }
@@ -306,7 +281,7 @@ function submitGroup(event) {
         else {
             const next = createGroup(name, groupAction === 'copy' ? group : undefined);
             store.groups.push(next);
-            store.activeGroupId = next.id;
+            selectRandomGroup(context(), next.id);
         }
     }
     save();
@@ -326,7 +301,7 @@ function bindUI() {
         }
         $('.ari-master').hidden = name !== 'random';
         if (name === 'skills') skillUI?.render();
-        if (name === 'settings') oracleSettingsUI?.refresh();
+        if (name === 'settings') { oracleSettingsUI?.refresh(); autoOracleUI?.refresh(); }
     };
     for (const name of tabs) {
         $(`#ari-tab-${name}`).addEventListener('click', () => selectTab(name));
@@ -346,7 +321,7 @@ function bindUI() {
         const rect = dialog.getBoundingClientRect();
         if (event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom) dialog.close();
     });
-    $('#ari-enabled').addEventListener('change', event => { settings().enabled = event.target.checked; save(); renderStatus(); });
+    $('#ari-enabled').addEventListener('change', event => { settings().enabled = event.target.checked; save(); renderStatus(); autoOracleUI?.refresh(); });
     $('#ari-stealth').addEventListener('change', event => { settings().stealthMode = event.target.checked; save(); renderStatus(); });
     $('#ari-include-result').addEventListener('change', event => { settings().includeRollResult = event.target.checked; save(); });
     $('#ari-theme').addEventListener('change', event => { settings().theme = event.target.value; save(); renderStatus(); });
@@ -362,7 +337,7 @@ function bindUI() {
         save(); renderRanges(); renderCounter(); renderLastRoll();
         $(`#ari-command-range-${rule.ranges.length - 1}`).focus();
     });
-    $('#ari-group').addEventListener('change', event => { settings().activeGroupId = event.target.value; selectedRuleId = ''; closeGroupForm(); save(); renderRules(); renderCommands(); });
+    $('#ari-group').addEventListener('change', event => { selectRandomGroup(context(), event.target.value); selectedRuleId = ''; closeGroupForm(); save(); renderRules(); renderCommands(); });
     $('#ari-rule-name').addEventListener('input', event => { selectedRule().name = event.target.value; save(); renderRules(); });
     $('#ari-rule-name').addEventListener('change', event => {
         selectedRule().name = event.target.value.trim() || '未命名指令';
@@ -370,7 +345,7 @@ function bindUI() {
         save(); renderRules();
     });
     const addRule = copy => {
-        const group = activeGroup(settings());
+        const group = currentGroup();
         const rule = createRule(uniqueName(group.rules, copy ? `${selectedRule().name} 副本` : '新骰子指令'), copy ? selectedRule() : undefined);
         group.rules.push(rule);
         selectedRuleId = rule.id;
@@ -383,7 +358,7 @@ function bindUI() {
         const group = createSampleGroup();
         group.name = uniqueGroupName(store, group.name);
         store.groups.push(group);
-        store.activeGroupId = group.id;
+        selectRandomGroup(context(), group.id);
         selectedRuleId = group.rules[0].id;
         closeGroupForm(); save(); render();
     });
@@ -419,9 +394,17 @@ async function init() {
     dialog = document.getElementById('ari-workbench');
     bindUI();
     skillUI = mountSkillUI(dialog, context, skillService);
-    const oracleService = createOracleService(context, skillService);
+    const oracleGate = createOracleRequestGate();
+    const oracleService = createOracleService(context, skillService, globalThis, { gate: oracleGate });
     oracleSettingsUI = mountOracleSettings(dialog, context, oracleService);
     oracleUI = mountOracleUI(dialog, context, oracleService, skillService, () => { selectedRuleId = ''; render(); });
+    const autoOracle = installAutoOracle(context,
+        createOracleService(context, skillService, globalThis, { gate: oracleGate, automatic: true }), {
+            onChange: () => { autoOracleUI?.refresh(); oracleUI?.refreshCaps(); },
+            onApply: () => { selectedRuleId = ''; render(); },
+            onChatChange: () => { selectedRuleId = ''; closeGroupForm(); render(); },
+        });
+    autoOracleUI = mountAutoOracleUI(dialog, context, autoOracle);
     mountConfigTransferUI(dialog, context, () => { renderGroups(); skillUI.renderGroups(); });
     render();
     const button = document.createElement('div');
@@ -443,7 +426,7 @@ async function init() {
 }
 
 context().eventSource.on(context().eventTypes.APP_READY, () =>
-    init().then(() => { appReady = true; void updateReloader.check(); }).catch(error => {
+    init().catch(error => {
         console.error('[AutoRandomInput] 初始化失败', error);
         globalThis.toastr?.error('随机指令界面加载失败，请刷新页面。', 'AutoRandomInput');
     }));

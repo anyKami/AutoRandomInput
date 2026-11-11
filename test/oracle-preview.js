@@ -13,7 +13,10 @@ export function installOracleFixture(ctx) {
             buildTranscript: c => c.chat.map(m => m.mes).join('\n'), buildWorldInfo: async () => '蓝签索引规则。',
             getSettings: () => ({ mode: 'direct', model: '界面测试桩（不联网）' }) },
         run: async messages => {
-            calls++; document.querySelector('#oracle-test-calls').textContent = `模型请求次数：${calls}`;
+            calls++;
+            for (const id of ['oracle-test-calls', 'auto-oracle-test-calls']) {
+                const counter = document.getElementById(id); if (counter) counter.textContent = `模型请求次数：${calls}`;
+            }
             const mode = document.querySelector('#oracle-test-mode').value;
             const data = sample();
             if (mode === 'broken') return '{invalid JSON';
@@ -32,5 +35,20 @@ export function installOracleFixture(ctx) {
         for (const [key, name] of [['valid','有效配置'], ['broken','非法 JSON'], ['overlap','范围重叠'], ['budget','技能超预算'], ['late','迟到结果'], ['no-mvu','MVU未就绪']]) select.append(new Option(name,key));
         const counter = document.createElement('p'); counter.id = 'oracle-test-calls'; counter.textContent = '模型请求次数：0';
         label.append(select); document.querySelector('#ari-oracle-panel').prepend(label,counter);
+        const controls = document.createElement('section'); controls.className = 'ari-transfer-card';
+        const title = document.createElement('p'); title.textContent = '隔离测试控制（模拟接口，不调用真实模型）';
+        const mirrorLabel = document.createElement('label'); mirrorLabel.className = 'ari-oracle-field';
+        const mirror = select.cloneNode(true); mirror.id = 'auto-oracle-test-mode';
+        mirrorLabel.append('模拟返回', mirror);
+        mirror.addEventListener('change', () => { select.value = mirror.value; });
+        select.addEventListener('change', () => { mirror.value = select.value; });
+        const autoCounter = counter.cloneNode(true); autoCounter.id = 'auto-oracle-test-calls';
+        const actions = document.createElement('div'); actions.className = 'ari-transfer-actions';
+        for (const [target, text] of [['preview-ai-reply', '新增 AI 楼层'], ['preview-regenerate', '重新生成同一层'], ['preview-switch-chat', '切换测试聊天']]) {
+            const button = document.createElement('button'); button.type = 'button'; button.textContent = text;
+            button.addEventListener('click', () => document.getElementById(target).click()); actions.append(button);
+        }
+        controls.append(title, mirrorLabel, autoCounter, actions);
+        document.querySelector('#ari-auto-oracle-title').parentElement.append(controls);
     };
 }

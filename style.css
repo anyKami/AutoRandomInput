@@ -252,6 +252,11 @@ body:has(#ari-workbench[open]) { overflow: hidden; }
 #ari-workbench #ari-skill-point-limit { width: 130px; min-width: 0; margin: 0; }
 #ari-workbench #ari-skill-point-total[data-overspent="true"] { color: var(--ari-error); }
 #ari-workbench .ari-skill-errors { color: var(--ari-error); font-size: 12px; line-height: 1.7; margin-top: 14px; white-space: pre-wrap; }
+#ari-workbench #ari-auto-oracle-result[data-error="true"] { color: var(--ari-error); }
+#ari-workbench #ari-auto-oracle-confirm { width: min(440px, calc(100vw - 32px)); color: var(--ari-text); box-shadow: 0 12px 36px #0006; }
+#ari-workbench #ari-auto-oracle-confirm::backdrop { background: #0006; }
+#ari-workbench #ari-auto-oracle-form { display: grid; gap: 12px; margin-top: 16px; }
+#ari-workbench #ari-auto-oracle-form[hidden] { display: none; }
 #ari-workbench .ari-skill-result-list { display: grid; gap: 10px; margin-top: 12px; font-size: 12px; color: var(--ari-muted); }
 #ari-workbench .ari-skill-result { border: 1px solid var(--ari-border); border-radius: 9px; padding: 12px; overflow-wrap: anywhere; }
 #ari-workbench .ari-skill-result strong { display: block; color: var(--ari-text); margin-bottom: 5px; }

@@ -1,4 +1,5 @@
 import { SETTINGS_KEY, createRollRecord, processMessage, removeLegacyMarkers } from './core.js';
+import { effectiveRandomSettings } from './oracle-auto-state.js';
 
 export async function installSendHooks(getContext, onChange, getInput = () => document.getElementById('send_textarea'),
     isRendered = id => !!document.querySelector(`#chat .mes[mesid="${id}"]`), skills = null) {
@@ -15,7 +16,7 @@ export async function installSendHooks(getContext, onChange, getInput = () => do
         input.dispatchEvent(new Event('input', { bubbles: true }));
     };
     const makeRecord = (current, beforeId) => {
-        const settings = current.extensionSettings[SETTINGS_KEY];
+        const settings = effectiveRandomSettings(current);
         const record = settings.enabled ? createRollRecord(settings) : { groupId: null, groupName: '技能检定', rolls: [], block: '', display: '' };
         return skills?.prepare(record, beforeId) ?? record;
     };
@@ -66,7 +67,7 @@ export async function installSendHooks(getContext, onChange, getInput = () => do
         const prepared = pending?.chat === current.chat && pending.messageId === messageId &&
             message?.is_user && !message.is_system ? pending.record : null;
         if (prepared) pending = null;
-        const outcome = processMessage(current.chat, messageId, current.extensionSettings[SETTINGS_KEY], Math.random, prepared,
+        const outcome = processMessage(current.chat, messageId, effectiveRandomSettings(current), Math.random, prepared,
             skills?.enabled() ? () => makeRecord(current, messageId) : null);
         if (outcome) await refresh(current, outcome.changedIds, messageId);
     };

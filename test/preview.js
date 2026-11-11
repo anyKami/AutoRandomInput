@@ -38,14 +38,18 @@ const listeners = new Map();
 const hooks = [];
 let saves = 0;
 const skillPreview = new URLSearchParams(location.search).has('skills');
+const oraclePreview = new URLSearchParams(location.search).has('oracle');
+document.getElementById('preview-mobile-link').href = `/mobile${location.search}`;
 let previewChat = 1;
 const loadMetadata = id => JSON.parse(localStorage.getItem(`${key}:chat-${id}`) ?? '{}');
 const skillChat = () => [{ is_user: false, is_system: false, mes: `技能配置组测试聊天 ${previewChat}，不连接模型。`, extra: {} }];
 const ctx = {
     extensionSettings: { [SETTINGS_KEY]: initial, [SKILL_GROUPS_KEY]: JSON.parse(localStorage.getItem(`${key}:skill-groups`) ?? 'null'),
         [ORACLE_SETTINGS_KEY]: JSON.parse(localStorage.getItem(`${key}:oracle`) ?? 'null') },
-    chat: skillPreview ? skillChat() : [], chatMetadata: loadMetadata(previewChat),
-    eventTypes: { APP_READY: 'ready', MESSAGE_SENT: 'sent', CHAT_CHANGED: 'chat', GENERATION_STARTED: 'generation', GENERATION_AFTER_COMMANDS: 'before' },
+    chat: skillPreview || oraclePreview ? skillChat() : [], chatMetadata: loadMetadata(previewChat),
+    chatId: `隔离预览 ${previewChat}`, characterId: 0, name2: '测试角色',
+    eventTypes: { APP_READY: 'ready', MESSAGE_SENT: 'sent', CHAT_CHANGED: 'chat', GENERATION_STARTED: 'generation', GENERATION_AFTER_COMMANDS: 'before',
+        MESSAGE_RECEIVED: 'received', CHARACTER_MESSAGE_RENDERED: 'rendered', GENERATION_ENDED: 'ended' },
     eventSource: {
         on(type, fn) { const list = listeners.get(type) ?? []; list.push(fn); listeners.set(type, list); },
         makeFirst(type, fn) { const list = listeners.get(type) ?? []; list.unshift(fn); listeners.set(type, list); },
@@ -66,11 +70,14 @@ const ctx = {
 };
 globalThis.SillyTavern = { getContext: () => ctx };
 let oracleFixtureReady;
-if (new URLSearchParams(location.search).has('oracle')) {
+if (oraclePreview) {
     const { installOracleFixture } = await import('./oracle-preview.js');
     oracleFixtureReady = installOracleFixture(ctx);
 }
-globalThis.toastr = { error: message => { document.getElementById('test-results').hidden = false; document.getElementById('test-results').textContent += `错误：${message}\n`; } };
+globalThis.toastr = Object.fromEntries([['error', '错误'], ['success', '成功'], ['info', '提示']].map(([kind, label]) => [kind, message => {
+    document.getElementById('test-results').hidden = false;
+    document.getElementById('test-results').textContent += `${label}：${message}\n`;
+}]));
 
 function renderMessage(id) {
     const message = ctx.chat[id];
@@ -113,10 +120,23 @@ document.getElementById('send_but').addEventListener('click', () => send());
 document.getElementById('send_textarea').addEventListener('keydown', event => {
     if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) { event.preventDefault(); send(); }
 });
-document.getElementById('preview-regenerate').addEventListener('click', () => ctx.eventSource.emit('generation', 'regenerate'));
-document.getElementById('preview-switch-chat').hidden = !skillPreview;
+async function simulateReply(regenerate = false) {
+    await ctx.eventSource.emit('generation', regenerate ? 'regenerate' : 'normal', {}, false);
+    if (regenerate && ctx.chat.at(-1)?.is_user === false) {
+        document.getElementById(`preview-message-${ctx.chat.length - 1}`)?.remove(); ctx.chat.pop();
+    }
+    const id = ctx.chat.push({ is_user: false, is_system: false, mes: `模拟 AI 回复 ${ctx.chat.length}，没有调用模型。`, extra: {} }) - 1;
+    // Non-streaming SillyTavern can report a regenerated message as normal.
+    await ctx.eventSource.emit('received', id, 'normal'); renderMessage(id);
+    await ctx.eventSource.emit('rendered', id, 'normal'); await ctx.eventSource.emit('ended');
+}
+document.getElementById('preview-regenerate').addEventListener('click', () => oraclePreview ? simulateReply(true) : ctx.eventSource.emit('generation', 'regenerate'));
+document.getElementById('preview-ai-reply').hidden = !oraclePreview;
+document.getElementById('preview-ai-reply').addEventListener('click', () => simulateReply());
+document.getElementById('preview-switch-chat').hidden = !skillPreview && !oraclePreview;
 document.getElementById('preview-switch-chat').addEventListener('click', async () => {
     ctx.saveMetadataDebounced(); previewChat = previewChat === 1 ? 2 : 1;
+    ctx.chatId = `隔离预览 ${previewChat}`;
     ctx.chatMetadata = loadMetadata(previewChat); ctx.chat = skillChat();
     document.getElementById('preview-chat').replaceChildren();
     ctx.chat.forEach((_, id) => renderMessage(id));

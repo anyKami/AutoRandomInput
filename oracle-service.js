@@ -4,6 +4,7 @@ import { SKILL_SETTINGS_KEY, normalizeSkillSettings } from './skills.js';
 import { importConfigBundle } from './config-transfer.js';
 import { mvuApi } from './mvu-skills.js';
 import { normalizeOracleSettings, oracleMessages, parseOracleReply, validateGeneratedConfig } from './oracle-config.js';
+import { selectRandomGroup } from './oracle-auto-state.js';
 
 export function oracleCapabilities(api) {
     const missing = ['run', 'context.buildCardSection', 'context.buildTranscript', 'context.buildWorldInfo']
@@ -28,10 +29,10 @@ export function cleanOracleText(text) {
         .replace(/\{\{\s*(?:get|set)(?:_message_)?var(?:iable)?\b[\s\S]*?\}\}/gi, '');
 }
 
-function scopeOf(ctx) {
+function scopeOf(ctx, automatic = false) {
     return { chat: ctx.chat, metadata: ctx.chatMetadata,
-        key: JSON.stringify([ctx.characterId, ctx.groupId, ctx.chatId]),
-        signature: JSON.stringify((ctx.chat ?? []).map(m => [m.is_user, m.is_system, m.swipe_id, m.mes])) };
+        key: JSON.stringify([automatic && ctx.groupId != null ? null : ctx.characterId, ctx.groupId, ctx.chatId]),
+        signature: automatic ? null : JSON.stringify((ctx.chat ?? []).map(m => [m.is_user, m.is_system, m.swipe_id, m.mes])) };
 }
 function sameScope(a, b) {
     return a.chat === b.chat && a.metadata === b.metadata && a.key === b.key && a.signature === b.signature;
@@ -71,38 +72,57 @@ export async function collectOracleContext(api, ctx, options, host = globalThis)
     return { blocks, notes };
 }
 
-export function createOracleService(getContext, skillService, host = globalThis) {
+export function createOracleRequestGate() {
+    let owner;
+    const listeners = new Set();
+    const changed = () => { for (const listener of listeners) listener(); };
+    return {
+        get busy() { return !!owner; },
+        subscribe(listener) { listeners.add(listener); return () => listeners.delete(listener); },
+        acquire(token) {
+            if (owner) throw new Error('正在生成，请等待或先取消。');
+            owner = token; changed();
+        },
+        release(token) { if (owner === token) { owner = null; changed(); } },
+    };
+}
+
+export function createOracleService(getContext, skillService, host = globalThis,
+    { gate = createOracleRequestGate(), automatic = false } = {}) {
     let current, draft, sequence = 0;
-    const isCurrent = scope => sameScope(scope, scopeOf(getContext()));
+    const isCurrent = scope => sameScope(scope, scopeOf(getContext(), automatic));
     const cancel = () => { sequence++; current?.abort(); current = null; draft = null; };
     const valid = () => !!draft && !draft.applied && isCurrent(draft.scope);
     return {
         cancel, valid,
-        get busy() { return !!current; },
+        get busy() { return gate.busy; },
+        subscribe: gate.subscribe,
         get draft() { return draft; },
         capabilities: () => oracleCapabilities(host.StoryOracleAPI),
         async generate(target, values, requirements = '', onProgress = () => {}) {
-            if (current) throw new Error('正在生成，请等待或先取消。');
+            if (gate.busy) throw new Error('正在生成，请等待或先取消。');
             const api = host.StoryOracleAPI;
             const caps = oracleCapabilities(api);
             if (!caps.ready) throw new Error(`故事神谕接口不可用：${caps.missing.join('、')}。请安装或启用故事神谕。`);
             const ctx = getContext();
             if (!ctx.chat?.length) throw new Error('请先打开一个聊天。');
-            const scope = scopeOf(ctx), options = normalizeOracleSettings(values);
+            const scope = scopeOf(ctx, automatic), options = normalizeOracleSettings(values);
+            const source = automatic ? { ...ctx, chat: structuredClone(ctx.chat) } : ctx;
             const id = ++sequence;
             const ctl = new AbortController(); current = ctl; draft = null;
+            gate.acquire(ctl);
             let timedOut = false;
             const timeout = setTimeout(() => { timedOut = true; ctl.abort(); }, options.timeoutSeconds * 1000);
             const check = () => {
                 if (id !== sequence || ctl.signal.aborted) throw new Error(timedOut ? '神谕请求超时，请调整超时或输出长度后重试。' : '已取消本次生成。');
-                if (!isCurrent(scope)) throw new Error('聊天或来源消息已变化，本次结果已作废，请重新生成。');
+                if (!isCurrent(scope)) throw new Error(automatic ? '已切换聊天，本次自动生成已取消。' : '聊天或来源消息已变化，本次结果已作废，请重新生成。');
             };
             const cancelled = new Promise((_, reject) => ctl.signal.addEventListener('abort', () => {
                 reject(new Error(timedOut ? '神谕请求超时，请重试。' : '已取消本次生成。'));
             }, { once: true }));
             const work = async () => {
-                const context = await collectOracleContext(api, ctx, options, host); check();
-                const messages = oracleMessages(target, options, requirements, context.blocks);
+                const context = await collectOracleContext(api, source, options, host); check();
+                const messages = oracleMessages(target, options, requirements, context.blocks, { automatic });
                 const raw = await api.run(messages, { signal: ctl.signal, maxTokens: options.maxTokens,
                     onDelta: full => { if (id === sequence && !ctl.signal.aborted && isCurrent(scope)) onProgress(String(full ?? '').length); } });
                 check();
@@ -112,7 +132,7 @@ export function createOracleService(getContext, skillService, host = globalThis)
                 return draft;
             };
             try { return await Promise.race([work(), cancelled]); }
-            finally { clearTimeout(timeout); if (current === ctl) current = null; }
+            finally { clearTimeout(timeout); if (current === ctl) current = null; gate.release(ctl); }
         },
         apply(value, { enableRandom = false, enableSkills = false, saveOnly = false } = {}) {
             if (!valid()) throw new Error('预览已过期或已经保存，请重新生成。');
@@ -138,6 +158,7 @@ export function createOracleService(getContext, skillService, host = globalThis)
             }
             ctx.extensionSettings[SETTINGS_KEY] = random;
             ctx.extensionSettings[SKILL_GROUPS_KEY] = library;
+            if (!saveOnly && added.randomGroups.length) selectRandomGroup(ctx, added.randomGroups[0].id);
             if (sheet) { ctx.chatMetadata[SKILL_SETTINGS_KEY] = sheet; skillService.resetSheet(); }
             // Commit once even if a host save callback fails; a second click must not duplicate groups.
             draft.applied = true;

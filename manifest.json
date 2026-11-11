@@ -1,15 +1,12 @@
 {
   "display_name": "随机指令",
-  "description": "随机指令工作台 3.0：故事神谕生成配置、独立设置页、配置导入导出、技能加值与 DC 检定、d100 范围指令。",
-  "version": "3.0.2",
+  "description": "随机指令工作台 3.1：按 AI 楼层自动生成随机指令、故事神谕生成配置、配置导入导出、技能加值与 DC 检定、d100 范围指令。",
+  "version": "3.1.0",
   "author": "anyKami",
   "homepage": "https://github.com/anyKami/AutoRandomInput",
   "loading_order": 30,
   "requires": [],
   "optional": [],
   "js": "index.js",
-  "css": "style.css",
-  "hooks": {
-    "update": "onAutoRandomInputUpdate"
-  }
+  "css": "style.css"
 }

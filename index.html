@@ -5,7 +5,7 @@
         <path d="M20 2 38 13v18L20 42 2 31V13L20 2Z M2 13l18 10 18-10 M20 23v19 M20 2v21" />
         <circle cx="20" cy="23" r="3" />
       </svg>
-      <div><span class="ari-eyebrow">AUTO RANDOM INPUT</span><h2 id="ari-title">随机指令工作台 3.0</h2></div>
+      <div><span class="ari-eyebrow">AUTO RANDOM INPUT</span><h2 id="ari-title">随机指令工作台 3.1</h2></div>
     </div>
     <div class="ari-header-actions">
       <button id="ari-transfer-toggle" type="button" aria-expanded="false" aria-controls="ari-transfer-panel">导入 / 导出</button>
@@ -149,7 +149,27 @@
       <h3>故事神谕</h3>
       <p id="ari-oracle-connection" role="status"></p>
       <button id="ari-oracle-probe" type="button">重新检测接口</button>
-      <p class="ari-skill-note">模型连接在故事神谕中配置。只有点击生成时才调用模型，每次一次；普通发送不会额外调用神谕。</p>
+      <p class="ari-skill-note">模型连接在故事神谕中配置。手动点击生成每次调用一次；开启下方自动功能后，也会按 AI 楼层调用。</p>
+    </section>
+    <section class="ari-transfer-card" aria-labelledby="ari-auto-oracle-title">
+      <h3 id="ari-auto-oracle-title">自动生成随机指令</h3>
+      <label class="ari-toggle"><input id="ari-auto-oracle-enabled" type="checkbox"><span class="ari-switch"></span><span id="ari-auto-oracle-label">当前聊天：自动生成已关闭</span></label>
+      <p id="ari-auto-oracle-hint" class="ari-skill-note"></p>
+      <dialog id="ari-auto-oracle-confirm" class="ari-transfer-card" aria-labelledby="ari-auto-oracle-confirm-title" aria-describedby="ari-auto-oracle-confirm-notice">
+        <h4 id="ari-auto-oracle-confirm-title">开启自动生成？</h4>
+        <p id="ari-auto-oracle-confirm-notice">此功能会增加 API 调用次数。完成设置后会立即调用故事神谕一次，之后每累计设定数量的 AI 回复再调用一次。</p>
+        <p>成功后会更新并选用本聊天的专用自动配置组。</p>
+        <div class="ari-transfer-actions"><button id="ari-auto-oracle-confirm-cancel" type="button" autofocus>取消</button><button id="ari-auto-oracle-confirm-ok" class="ari-primary" type="button">继续设置</button></div>
+      </dialog>
+      <form id="ari-auto-oracle-form" hidden>
+        <label class="ari-oracle-field"><span>每新增多少层 AI 回复生成一次</span><input id="ari-auto-oracle-interval" type="number" min="1" step="1" required value="5"></label>
+        <label class="ari-oracle-field"><span>自定义提示词（可留空）</span><textarea id="ari-auto-oracle-prompt" rows="4" maxlength="6000" placeholder="留空时根据近期剧情和世界书设定，为接下来几轮生成随机指令。"></textarea></label>
+        <p class="ari-skill-note">复用下方的资料来源、骰型、数量、字符上限和超时设置；只更新专用自动组。已有手动组保留，可随时切换。</p>
+        <div id="ari-auto-oracle-start-actions" class="ari-transfer-actions" hidden><button class="ari-primary" type="submit">开始自动生成</button><button id="ari-auto-oracle-setup-cancel" type="button">取消设置</button></div>
+      </form>
+      <p id="ari-auto-oracle-master-note" class="ari-skill-note">随机指令总开关关闭：仍会生成配置，发送时不会追加指令。如需使用，请在随机指令页开启总开关。</p>
+      <p id="ari-auto-oracle-progress" class="ari-skill-note" role="status" aria-live="polite"></p>
+      <p id="ari-auto-oracle-result" class="ari-skill-note" role="status"></p>
     </section>
     <section class="ari-transfer-card">
       <h3>生成默认设置</h3>
