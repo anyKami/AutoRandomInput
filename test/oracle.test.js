@@ -205,14 +205,42 @@ for (const [name, change] of [
     assert.equal(h.service.valid(), false); assert.throws(() => h.service.apply(draft.value));
     assert.equal(h.counts().settingsSaves, 0);
 });
+test('streaming progress skips historical text and stops after the chat changes', async () => {
+    const progress = [];
+    let streaming = false, historyReads = 0;
+    const h = fixture(async (_, { onDelta }) => {
+        streaming = true;
+        onDelta('a'); onDelta('abc');
+        h.ctx.chatId = 'b';
+        onDelta('late');
+        streaming = false;
+        return JSON.stringify(config());
+    });
+    const message = h.ctx.chat[0], text = message.mes;
+    Object.defineProperty(message, 'mes', { get() { if (streaming) historyReads++; return text; } });
+    await assert.rejects(h.service.generate('both', {}, '', count => progress.push(count)), /来源消息已变化/);
+    assert.deepEqual(progress, [1, 3]);
+    assert.equal(historyReads, 0);
+});
+test('an in-place source edit during streaming prevents creating a draft', async () => {
+    const h = fixture(async (_, { onDelta }) => {
+        onDelta('partial');
+        h.ctx.chat[0].mes += ' changed';
+        return JSON.stringify(config());
+    });
+    await assert.rejects(h.service.generate('both', {}), /来源消息已变化/);
+    assert.equal(h.service.draft, null);
+});
 test('cancel defeats an API ignoring AbortSignal; late callbacks cannot replace a newer draft', async () => {
-    let finish, invoked;
+    let finish, invoked, delta;
+    const progress = [];
     const started = new Promise(resolve => { invoked = resolve; });
-    const h = fixture(() => { invoked(); return new Promise(resolve => { finish = resolve; }); });
-    const pending = h.service.generate('both', {}); await started;
+    const h = fixture((_, { onDelta }) => { delta = onDelta; invoked(); return new Promise(resolve => { finish = resolve; }); });
+    const pending = h.service.generate('both', {}, '', count => progress.push(count)); await started;
     await assert.rejects(h.service.generate('both', {}), /正在生成/);
     h.service.cancel(); await assert.rejects(pending, /取消/);
     h.api.run = async () => JSON.stringify(config()); const fresh = await h.service.generate('both', {});
+    delta('late'); assert.deepEqual(progress, []);
     finish(JSON.stringify(config())); await new Promise(resolve => setImmediate(resolve));
     assert.equal(h.service.draft.id, fresh.id); assert.equal(h.service.valid(), true);
 });
