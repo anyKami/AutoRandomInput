@@ -1,6 +1,6 @@
 import { DICE_SIDES, SETTINGS_KEY, THEMES, activeGroup, createGroup, createRule, createSampleGroup, displayMessage, normalizeSettings, uniqueGroupName, uniqueName, validateCommandRanges } from './core.js';
 import { installSendHooks } from './send.js';
-import { installSkillService } from './mvu-skills.js';
+import { installSkillService, mvuApi } from './mvu-skills.js';
 import { mountSkillUI } from './skill-ui.js';
 import { SKILL_GROUPS_KEY, normalizeSkillGroups } from './skill-groups.js';
 import { mountConfigTransferUI } from './config-transfer-ui.js';
@@ -308,6 +308,7 @@ function bindUI() {
             $(`#ari-tab-${tab}`).tabIndex = selected ? 0 : -1;
             $(`#ari-${tab}-panel`).hidden = !selected;
         }
+        $(`#ari-tab-${name}`).scrollIntoView?.({ block: 'nearest', inline: 'nearest' });
         $('.ari-master').hidden = name !== 'random';
         if (name === 'skills') skillUI?.render();
         if (name === 'narrative') narrativeUI?.refresh();
@@ -404,14 +405,22 @@ async function init() {
     dialog = document.getElementById('ari-workbench');
     bindUI();
     skillUI = mountSkillUI(dialog, context, skillService);
-    narrativeUI = mountNarrativeUI(dialog, context);
+    narrativeUI = mountNarrativeUI(dialog, context, () => {}, {
+        mvuState: () => {
+            const ctx = context(); let index = ctx.chat.length - 1;
+            while (index >= 0 && ctx.chat[index]?.is_system) index--;
+            try { const data = index >= 0 ? mvuApi()?.getMvuData({ type: 'message', message_id: index }) : null; return { ready: !!data?.stat_data, data }; }
+            catch { return { ready: false, data: null }; }
+        },
+        openAutoSettings: () => { $('#ari-tab-settings').click(); $('#ari-auto-oracle-title').scrollIntoView({ block: 'start' }); },
+    });
     const oracleGate = createOracleRequestGate();
     const oracleService = createOracleService(context, skillService, globalThis, { gate: oracleGate });
     oracleSettingsUI = mountOracleSettings(dialog, context, oracleService);
     oracleUI = mountOracleUI(dialog, context, oracleService, skillService, () => { selectedRuleId = ''; render(); });
     const autoOracle = installAutoOracle(context,
         createOracleService(context, skillService, globalThis, { gate: oracleGate, automatic: true }), {
-            onChange: () => { autoOracleUI?.refresh(); oracleUI?.refreshCaps(); },
+            onChange: () => { autoOracleUI?.refresh(); oracleUI?.refreshCaps(); narrativeUI?.refresh(); },
             onApply: () => { selectedRuleId = ''; render(); },
             onChatChange: () => { selectedRuleId = ''; closeGroupForm(); render(); },
         });

@@ -1,7 +1,7 @@
 {
   "display_name": "随机指令",
   "description": "随机指令工作台 3.2：剧情增强、持续剧情线、故事神谕、配置导入导出和技能检定。",
-  "version": "3.2.0",
+  "version": "3.2.1",
   "author": "anyKami",
   "homepage": "https://github.com/anyKami/AutoRandomInput",
   "loading_order": 30,
