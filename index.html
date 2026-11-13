@@ -163,8 +163,12 @@
       </dialog>
       <form id="ari-auto-oracle-form" hidden>
         <label class="ari-oracle-field"><span>每新增多少层 AI 回复生成一次</span><input id="ari-auto-oracle-interval" type="number" min="1" step="1" required value="5"></label>
+        <label class="ari-oracle-field"><span>每骰指令条数</span><input id="ari-auto-oracle-command-count" type="number" min="1" max="100" step="1" required value="10"></label>
+        <label class="ari-oracle-field"><span>骰子数量</span><input id="ari-auto-oracle-rule-count" type="number" min="1" max="10" step="1" required value="3"></label>
+        <label class="ari-oracle-field"><span>骰子面数</span><select id="ari-auto-oracle-dice-sides"><option value="1">d1</option><option value="2">d2</option><option value="3">d3</option><option value="4">d4</option><option value="5">d5</option><option value="6">d6</option><option value="7">d7</option><option value="8">d8</option><option value="9">d9</option><option value="10">d10</option><option value="20" selected>d20</option><option value="100">d100</option></select></label>
+        <label class="ari-oracle-field"><span>指令映射</span><select id="ari-auto-oracle-mapping"><option value="first">前 N 点有指令，后续留空</option><option value="even">均匀覆盖所有点数</option></select></label>
         <label class="ari-oracle-field"><span>自定义提示词（可留空）</span><textarea id="ari-auto-oracle-prompt" rows="4" maxlength="6000" placeholder="留空时根据近期剧情和世界书设定，为接下来几轮生成随机指令。"></textarea></label>
-        <p class="ari-skill-note">复用下方的资料来源、骰型、数量、字符上限和超时设置；只更新专用自动组。已有手动组保留，可随时切换。</p>
+        <p class="ari-skill-note">复用下方的资料来源、字符上限和超时设置；只更新专用自动组。已有手动组保留，可随时切换。</p>
         <div id="ari-auto-oracle-start-actions" class="ari-transfer-actions" hidden><button class="ari-primary" type="submit">开始自动生成</button><button id="ari-auto-oracle-setup-cancel" type="button">取消设置</button></div>
       </form>
       <p id="ari-auto-oracle-master-note" class="ari-skill-note">随机指令总开关关闭：仍会生成配置，发送时不会追加指令。如需使用，请在随机指令页开启总开关。</p>

@@ -104,7 +104,7 @@ export function createOracleService(getContext, skillService, host = globalThis,
         subscribe: gate.subscribe,
         get draft() { return draft; },
         capabilities: () => oracleCapabilities(host.StoryOracleAPI),
-        async generate(target, values, requirements = '', onProgress = () => {}) {
+        async generate(target, values, requirements = '', onProgress = () => {}, automaticOptions = {}) {
             if (gate.busy) throw new Error('正在生成，请等待或先取消。');
             const api = host.StoryOracleAPI;
             const caps = oracleCapabilities(api);
@@ -127,7 +127,7 @@ export function createOracleService(getContext, skillService, host = globalThis,
             }, { once: true }));
             const work = async () => {
                 const context = await collectOracleContext(api, source, options, host); check();
-                const messages = oracleMessages(target, options, requirements, context.blocks, { automatic });
+                const messages = oracleMessages(target, options, requirements, context.blocks, { automatic, ...automaticOptions });
                 const raw = await api.run(messages, { signal: ctl.signal, maxTokens: options.maxTokens,
                     onDelta: full => {
                         // Progress only needs the active chat; check() validates its contents after the stream.

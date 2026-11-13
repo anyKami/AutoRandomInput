@@ -69,7 +69,7 @@ export function validateGeneratedConfig(value, target, options = {}) {
     return config;
 }
 
-export function oracleMessages(target, options, requirements, blocks, { automatic = false } = {}) {
+export function oracleMessages(target, options, requirements, blocks, { automatic = false, commandCount } = {}) {
     const request = String(requirements ?? '').trim();
     const purpose = automatic && !request
         ? '本次为按剧情自动更新的随机指令配置，未填写额外要求：根据近期对话中的当前剧情、人物关系和世界书设定，为接下来几轮设计可复用的变化、互动与意外性。以当前阶段为重点，无需设计长期通用规则；不把尚未发生的事件当作既定事实，不代替用户决定行动。'
@@ -92,8 +92,9 @@ ${targetRule} 所有名称为非空中文文字。不输出 id、聊天关联、
 
 ${target === 'skills' ? '' : `随机指令组字段：name、rules（1～10套）。每套字段 name、enabled（true）、diceSides（整数1～10、20或100）、commands、ranges。
 固定参数 randomDice 为数字时，每套的 diceSides 必须等于该数字；ruleCount 大于 0 时，rules 数量必须等于该数字。
+${automatic ? `本次每套骰子须提供恰好 ${commandCount} 条非空指令，不得多给。骰型为 d100 时，ranges 按顺序使用单点 1 至 ${commandCount}，每条单点范围对应一条指令，commands 为空；其他骰型时 commands 前 ${commandCount} 项各一条非空指令，其余项为空，ranges 为空。` : ''}
 d1～d10和d20：commands 为按骰点排列的字符串数组，长度不超过20；空白字符串表示投中跳过；ranges 为[]。
-d100：commands 为[]；ranges 为若干 {"range":"1-14","command":"指令内容"}。range 是1～100内含首尾的整数区间或单个骰点；范围不得重叠，允许空档，空档代表无指令。不要列100个槽位。
+d100：commands 为[]；ranges 为若干 {"range":"1-14","command":"指令内容"}。range 是1～100内含首尾的整数区间或单个骰点；范围不得重叠，允许空档，空档代表无指令。${automatic ? '' : '不要列100个槽位。'}
 指令应符合世界规则和人物设定，并与本次要求的使用范围相符，能够多轮自然复用。明确何种情境适用，不把尚未发生或一次性的事件当成每轮必发事实，不强迫用户选择。每套职责清晰，多套同时命中也须兼容。采用的技能检定成败优先，任何随机指令均不得反转它；随机内容可影响氛围、细节、机会或后果，不替代技能判定。无指定数量时优先2～4套。
 
 `}${target === 'random' ? '' : `技能组字段：name、diceSides（10/20/100）、mode（challenge/every）、maxChecks（1/2/3）、pointLimitMode（auto/custom）、pointLimit（非负整数）、skills（1～50项，每项仅 name 和 modifier）。技能名去掉首尾空格后不能重复。

@@ -5,10 +5,12 @@ export function mountAutoOracleUI(dialog, getContext, controller) {
     const toggle = $('#ari-auto-oracle-enabled'), form = $('#ari-auto-oracle-form');
     const confirmation = $('#ari-auto-oracle-confirm');
     const interval = $('#ari-auto-oracle-interval'), prompt = $('#ari-auto-oracle-prompt');
+    const commandCount = $('#ari-auto-oracle-command-count'), ruleCount = $('#ari-auto-oracle-rule-count');
+    const diceSides = $('#ari-auto-oracle-dice-sides'), mapping = $('#ari-auto-oracle-mapping');
     let metadata, settingUp = false;
     function fill() {
         const state = controller.state();
-        interval.value = state.interval; prompt.value = state.prompt;
+        interval.value = state.interval; prompt.value = state.prompt; commandCount.value = state.commandCount; ruleCount.value = state.ruleCount; diceSides.value = state.diceSides; mapping.value = state.mapping;
     }
     function refresh() {
         const ctx = getContext(), state = controller.state();
@@ -23,7 +25,7 @@ export function mountAutoOracleUI(dialog, getContext, controller) {
         $('#ari-auto-oracle-start-actions').hidden = !settingUp;
         $('#ari-auto-oracle-hint').textContent = !ready ? '请先打开一个聊天，每个聊天分别开启。'
             : settingUp ? '确认间隔和提示词后，点击“开始自动生成”将立即调用一次。取消则不调用 API。'
-                : '只计新增 AI 楼层，重生成、滑动重抽和续写不计数。修改间隔会重新计数；修改提示词从下次生成生效。';
+                : '只计新增 AI 楼层，重生成、滑动重抽和续写不计数。修改间隔会重新计数；修改提示词和数量从下次生成生效。';
         const progress = `本轮已累计 ${state.progress}/${state.interval} 层 AI 回复。`;
         $('#ari-auto-oracle-progress').textContent = controller.busy ? `正在自动生成… ${progress}`
             : controller.pending ? `已达到生成条件，等待当前回复或神谕请求完成。${progress}`
@@ -39,7 +41,9 @@ export function mountAutoOracleUI(dialog, getContext, controller) {
         if (!interval.reportValidity() || !Number.isSafeInteger(count) || count < 1) {
             throw new Error('生成间隔须为大于等于 1 的整数。');
         }
-        return { interval: count, prompt: prompt.value };
+        if (!commandCount.reportValidity() || Number(commandCount.value) > Number(diceSides.value)) throw new Error('指令条数须为 1 到骰子面数的整数。');
+        if (!ruleCount.reportValidity()) throw new Error('骰子数量须为 1 到 10 的整数。');
+        return { interval: count, prompt: prompt.value, commandCount: Number(commandCount.value), ruleCount: Number(ruleCount.value), diceSides: Number(diceSides.value), mapping: mapping.value };
     };
     const showError = error => {
         $('#ari-auto-oracle-result').textContent = error.message;
@@ -71,6 +75,10 @@ export function mountAutoOracleUI(dialog, getContext, controller) {
     };
     interval.addEventListener('change', update);
     prompt.addEventListener('input', update);
+    commandCount.addEventListener('change', update);
+    ruleCount.addEventListener('change', update);
+    diceSides.addEventListener('change', update);
+    mapping.addEventListener('change', update);
     $('#ari-auto-oracle-setup-cancel').addEventListener('click', cancelSetup);
     dialog.addEventListener('close', cancelSetup);
     refresh();

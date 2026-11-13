@@ -11,10 +11,22 @@ import { parseConfigFile, serializeConfigFile } from '../config-transfer.js';
 const reply = text => ({ is_user: false, is_system: false, mes: text, extra: {} });
 const bundle = (command = '新的剧情变化') => ({ format: 'auto-random-input', formatVersion: 1,
     randomGroups: [{ name: '模型生成组', rules: [{ name: '剧情变化', diceSides: 1, commands: [command] }] }], skillGroups: [] });
+function autoBundle({ diceSides = 20, commandCount = 10, ruleCount = 3, command = '新的剧情变化' } = {}) {
+    const commands = Array.from({ length: commandCount }, (_, index) => index ? `指令 ${index + 1}` : command);
+    const data = bundle(command);
+    data.randomGroups[0].rules = Array.from({ length: ruleCount }, (_, index) => ({
+        name: `骰子 ${index + 1}`, diceSides,
+        commands: diceSides === 100 ? [] : commands.slice(),
+        ranges: diceSides === 100 ? commands.map((text, point) => ({ range: String(point + 1), command: text })) : [],
+    }));
+    return data;
+}
 const tick = () => new Promise(resolve => setImmediate(resolve));
 const deferred = () => { let resolve; const promise = new Promise(done => { resolve = done; }); return { promise, resolve }; };
 
-function fixture({ saved, fallbackEvent = false, run = async () => JSON.stringify(bundle()) } = {}) {
+function fixture({ saved, fallbackEvent = false, run = async messages => JSON.stringify(
+    messages[0].content.includes('本次每套骰子') ? autoBundle() : bundle(),
+) } = {}) {
     const listeners = new Map(), notices = [], requests = [];
     let saves = 0, metadataSaves = 0;
     const store = normalizeSettings();
@@ -44,8 +56,9 @@ function fixture({ saved, fallbackEvent = false, run = async () => JSON.stringif
     const controller = installAutoOracle(getContext, automatic, { notify: (kind, message) => notices.push({ kind, message }) });
     const emit = (name, ...args) => ctx.eventSource.emit(ctx.eventTypes[name] ?? name, ...args);
     return { ctx, store, api, host, gate, manual, automatic, controller, requests, notices, emit,
+        setRun(next) { run = next; },
         saves: () => ({ saves, metadataSaves }),
-        start: (interval = 2, prompt = '') => controller.start({ interval, prompt }),
+        start: (interval = 2, prompt = '', parameters) => controller.start({ interval, prompt, ...parameters }),
         async receive(text = '新增剧情', type = 'normal', originalType = type, replace = false) {
             await emit('GENERATION_STARTED', originalType, {}, false);
             if (replace) ctx.chat.pop();
@@ -75,6 +88,8 @@ test('defaults are off; opening settings, receiving replies, and restoring a cha
     await restored.emit('CHAT_CHANGED'); await tick();
     assert.equal(restored.requests.length, 0);
     assert.equal(restored.controller.state().progress, 2);
+    const { commandCount, ruleCount, diceSides, mapping } = restored.controller.state();
+    assert.deepEqual({ commandCount, ruleCount, diceSides, mapping }, { commandCount: 10, ruleCount: 3, diceSides: 20, mapping: 'first' });
     await restored.receive();
     assert.equal(restored.requests.length, 1);
 });
@@ -88,6 +103,13 @@ test('starting makes one immediate request with the custom prompt and preserves 
     assert.equal(h.store.activeGroupId, original.id);
     assert.equal(h.store.enabled, false);
     assert.equal(activeGroup(effectiveRandomSettings(h.ctx)).id, h.controller.state().groupId);
+    const { rules } = activeGroup(effectiveRandomSettings(h.ctx));
+    assert.equal(rules.length, 3);
+    for (const rule of rules) {
+        assert.equal(rule.diceSides, 20);
+        assert.equal(rule.commands.filter(Boolean).length, 10);
+        assert.ok(rule.commands.slice(10).every(command => command === ''));
+    }
     assert.equal(h.controller.state().progress, 0);
     assert.equal(h.notices.filter(n => n.kind === 'success').length, 1);
 });
@@ -99,8 +121,45 @@ test('automatic defaults use recent plot and world info while manual defaults re
     assert.doesNotMatch(messages.map(message => message.content).join('\n'), /长期使用|技能组字段/);
     assert.match(messages[1].content, /skillGroups 必须为 \[\]/);
     assert.ok(messages.some(m => m.content.includes('世界书资料') && m.content.includes('历史开场白')));
-    await h.manual.generate('random', {});
+    const manual = await h.manual.generate('random', { randomDice: 1, ruleCount: 1 });
     assert.match(h.requests[1][0][0].content, /优先生成适合这张角色卡长期使用/);
+    assert.doesNotMatch(h.requests[1][0][0].content, /本次每套骰子/);
+    assert.equal(manual.error, undefined);
+    assert.deepEqual(manual.value, bundle());
+});
+
+for (const [diceSides, commandCount, endPoints] of [
+    [6, 4, [1, 3, 4, 6]], [20, 3, [6, 13, 20]], [100, 3, [33, 66, 100]],
+]) for (const mapping of ['first', 'even']) test(`d${diceSides} ${mapping} maps all faces correctly`, async () => {
+    const parameters = { diceSides, commandCount, ruleCount: 1, mapping };
+    const h = fixture({ run: async () => JSON.stringify(autoBundle(parameters)) });
+    await h.start(2, '', parameters);
+    assert.equal(h.notices.at(-1).kind, 'success');
+    const effective = effectiveRandomSettings(h.ctx);
+    const expected = ['新的剧情变化', ...Array.from({ length: commandCount - 1 }, (_, index) => `指令 ${index + 2}`)];
+    for (let point = 1; point <= diceSides; point++) {
+        const record = createRollRecord(effective, () => (point - 0.5) / diceSides);
+        const index = mapping === 'first' ? point - 1 : endPoints.findIndex(end => point <= end);
+        assert.equal(record.rolls[0].result, point);
+        assert.equal(record.rolls[0].skipped, !expected[index]);
+        if (expected[index]) assert.ok(record.block.includes(expected[index]), `d${diceSides} point ${point}`);
+        else assert.equal(record.block, '');
+    }
+});
+
+test('invalid automatic parameters cannot start a request or replace saved settings', async () => {
+    const h = fixture();
+    const baseline = { interval: 2, prompt: '' };
+    const invalid = [{ ruleCount: 0 }, { ruleCount: 11 }, { ruleCount: 1.5 },
+        { commandCount: 0 }, { commandCount: 1.5 }, { diceSides: 6, commandCount: 7 }, { diceSides: 12 }, { mapping: 'unknown' }];
+    for (const parameters of invalid) assert.throws(() => h.controller.start({ ...baseline, ...parameters }));
+    assert.equal(h.ctx.chatMetadata[AUTO_ORACLE_KEY], undefined);
+    assert.equal(h.requests.length, 0);
+    await h.start();
+    const saved = structuredClone(h.ctx.chatMetadata[AUTO_ORACLE_KEY]);
+    for (const parameters of invalid) assert.throws(() => h.controller.update({ ...baseline, ...parameters }));
+    assert.deepEqual(h.ctx.chatMetadata[AUTO_ORACLE_KEY], saved);
+    assert.equal(h.requests.length, 1);
 });
 
 for (const fallbackEvent of [false, true]) test(`counts new floors once with ${fallbackEvent ? 'received' : 'rendered'} events`, async () => {
@@ -160,7 +219,7 @@ test('updates only the dedicated group, keeps its ID and name, and recreates a d
     const h = fixture(); await h.start(1);
     const id = h.controller.state().groupId;
     h.store.groups.find(g => g.id === id).name = '自己改的组名';
-    h.api.run = async () => JSON.stringify(bundle('更新后的命令'));
+    h.api.run = async () => JSON.stringify(autoBundle({ command: '更新后的命令' }));
     await h.receive();
     assert.equal(h.store.groups.length, 2);
     assert.equal(h.controller.state().groupId, id);
@@ -191,16 +250,22 @@ test('manual selection takes effect until the next automatic update; sending and
 });
 
 test('chat settings, progress and automatic selection are isolated and survive returning to a chat', async () => {
-    const h = fixture(); await h.start(3, '甲的要求'); await h.receive();
+    const parameters = { commandCount: 4, ruleCount: 2, diceSides: 6, mapping: 'even' };
+    const h = fixture(); h.setRun(async () => JSON.stringify(autoBundle(parameters)));
+    await h.start(3, '甲的要求', parameters); await h.receive();
     const first = { chat: h.ctx.chat, metadata: h.ctx.chatMetadata }, id = h.controller.state().groupId;
     await h.switchChat('聊天乙');
     assert.equal(h.controller.state().enabled, false);
     assert.equal(activeGroup(effectiveRandomSettings(h.ctx)).id, h.store.activeGroupId);
+    assert.equal(h.controller.state().diceSides, 20);
+    h.setRun(async () => JSON.stringify(autoBundle()));
     await h.start(1, '乙的要求');
     assert.notEqual(h.controller.state().groupId, id);
     await h.switchChat('聊天甲', first.chat, first.metadata);
     assert.equal(h.controller.state().progress, 1);
     assert.equal(h.controller.state().prompt, '甲的要求');
+    const { commandCount, ruleCount, diceSides, mapping } = h.controller.state();
+    assert.deepEqual({ commandCount, ruleCount, diceSides, mapping }, parameters);
     assert.equal(activeGroup(effectiveRandomSettings(h.ctx)).id, id);
     assert.equal(h.requests.length, 2);
 });
@@ -217,11 +282,15 @@ test('editing the interval or prompt does not call the API; changing interval re
     assert.throws(() => h.controller.update({ interval: 0, prompt: '' }), /整数/);
 });
 
-for (const name of ['bad-json', 'invalid-ranges', 'missing-api']) test(`${name} keeps old configuration and waits a full interval before trying again`, async () => {
+for (const name of ['bad-json', 'invalid-ranges', 'missing-api', 'wrong-rule-count', 'wrong-dice', 'blank-command', 'extra-command']) test(`${name} keeps old configuration and waits a full interval before trying again`, async () => {
     const h = fixture(); await h.start(2);
     const before = JSON.stringify(h.store.groups);
     if (name === 'bad-json') h.api.run = async () => '{broken';
     if (name === 'missing-api') h.host.StoryOracleAPI = undefined;
+    if (name === 'wrong-rule-count') h.api.run = async () => JSON.stringify(autoBundle({ ruleCount: 2 }));
+    if (name === 'wrong-dice') h.api.run = async () => JSON.stringify(autoBundle({ diceSides: 100 }));
+    if (name === 'extra-command') h.api.run = async () => JSON.stringify(autoBundle({ commandCount: 11 }));
+    if (name === 'blank-command') h.api.run = async () => JSON.stringify(autoBundle({ command: '  ' }));
     if (name === 'invalid-ranges') h.api.run = async () => {
         const data = bundle(); data.randomGroups[0].rules[0] = { name: '范围', diceSides: 100,
             ranges: [{ range: '1-50', command: '甲' }, { range: '40-60', command: '乙' }] };
@@ -251,17 +320,42 @@ test('new same-chat replies and edits during a request do not invalidate its res
     const result = deferred(), h = fixture({ run: () => result.promise });
     const pending = h.start(5); await tick();
     h.ctx.chat[0].mes = '编辑过的历史'; await h.receive();
-    result.resolve(JSON.stringify(bundle())); await pending;
+    result.resolve(JSON.stringify(autoBundle())); await pending;
     assert.equal(h.notices[0].kind, 'success');
     assert.equal(h.controller.state().progress, 1);
     assert.ok(!h.requests[0][0].some(m => m.content.includes('编辑过的历史')));
+});
+
+test('editing automatic generation parameters during a request takes effect on the next request', async () => {
+    const result = deferred(), h = fixture({ run: () => result.promise });
+    const pending = h.start(2); await tick();
+    await h.receive();
+    const next = { interval: 2, prompt: '下一轮要求', diceSides: 100, commandCount: 2, ruleCount: 1, mapping: 'even' };
+    h.controller.update(next);
+    assert.equal(h.requests.length, 1);
+    assert.equal(h.controller.state().progress, 1);
+    result.resolve(JSON.stringify(autoBundle())); await pending;
+    assert.equal(h.notices.at(-1).kind, 'success');
+    const original = activeGroup(effectiveRandomSettings(h.ctx));
+    assert.equal(original.rules.length, 3);
+    assert.equal(original.rules[0].diceSides, 20);
+    assert.equal(original.rules[0].commands[10], '');
+    assert.equal(h.controller.state().mapping, 'even');
+    h.setRun(async () => JSON.stringify(autoBundle(next)));
+    await h.receive();
+    assert.equal(h.notices.at(-1).kind, 'success');
+    const updated = activeGroup(effectiveRandomSettings(h.ctx));
+    assert.equal(updated.rules.length, 1);
+    assert.equal(updated.rules[0].diceSides, 100);
+    assert.deepEqual(updated.rules[0].ranges.map(row => row.range), ['1-50', '51-100']);
+    assert.ok(h.requests[1][0].some(message => message.content.includes(next.prompt)));
 });
 
 test('changing the speaking character in the same group does not invalidate an automatic request', async () => {
     const result = deferred(), h = fixture({ run: () => result.promise });
     h.ctx.groupId = 'group';
     const pending = h.start(); await tick(); h.ctx.characterId = 9;
-    result.resolve(JSON.stringify(bundle())); await pending;
+    result.resolve(JSON.stringify(autoBundle())); await pending;
     assert.equal(h.notices[0].kind, 'success');
 });
 
@@ -270,7 +364,7 @@ for (const action of ['stop', 'switch']) test(`${action} cancels and ignores a l
     const pending = h.start(); await tick();
     if (action === 'stop') h.controller.stop(); else await h.switchChat('聊天乙');
     await pending;
-    result.resolve(JSON.stringify(bundle())); await tick();
+    result.resolve(JSON.stringify(autoBundle())); await tick();
     assert.equal(h.store.groups.length, 1);
     assert.equal(h.notices.length, 1); assert.equal(h.notices[0].kind, 'info');
     assert.equal(h.controller.state().enabled, false);
@@ -280,7 +374,7 @@ test('automatic generation waits for manual generation and does not replace its 
     const result = deferred(), h = fixture({ run: () => result.promise });
     const manual = h.manual.generate('random', {}); await tick();
     await h.start(2); assert.equal(h.controller.pending, true); assert.equal(h.requests.length, 1);
-    h.api.run = async () => JSON.stringify(bundle('自动结果'));
+    h.api.run = async () => JSON.stringify(autoBundle({ command: '自动结果' }));
     result.resolve(JSON.stringify(bundle('手动结果')));
     const draft = await manual; await tick();
     assert.equal(h.controller.pending, false);
@@ -298,9 +392,9 @@ test('automatic requests serialize and coalesce multiple elapsed intervals into 
     for (let i = 0; i < 4; i++) await h.receive(`楼层 ${i}`);
     assert.equal(calls, 1); assert.equal(h.controller.pending, true);
     await assert.rejects(h.manual.generate('random', {}), /正在生成/);
-    first.resolve(JSON.stringify(bundle('首次'))); await pending; await tick();
+    first.resolve(JSON.stringify(autoBundle({ command: '首次' }))); await pending; await tick();
     assert.equal(calls, 2);
-    second.resolve(JSON.stringify(bundle('合并更新'))); await tick();
+    second.resolve(JSON.stringify(autoBundle({ command: '合并更新' }))); await tick();
     assert.equal(calls, 2); assert.equal(h.controller.pending, false);
     assert.equal(h.store.groups.length, 2);
 });

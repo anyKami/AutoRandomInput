@@ -36,10 +36,28 @@ export function installAutoOracle(getContext, service, {
         const job = { cancelled: false };
         task = job; onChange();
         try {
-            const draft = await service.generate('random', ctx.extensionSettings[ORACLE_SETTINGS_KEY], settings.prompt);
+            const draft = await service.generate('random', { ...ctx.extensionSettings[ORACLE_SETTINGS_KEY], randomDice: settings.diceSides, ruleCount: settings.ruleCount }, settings.prompt, undefined, { commandCount: settings.commandCount });
             if (job.cancelled || !sameChat(ctx)) return;
             if (draft.error) throw new Error(draft.error);
             const generated = validateGeneratedConfig(draft.value, 'random', draft.options).randomGroups[0];
+            for (const rule of generated.rules) {
+                const commands = settings.diceSides === 100
+                    ? rule.ranges.map((row, i) => row.range === String(i + 1) ? row.command : '')
+                    : rule.commands.slice(0, settings.commandCount);
+                const extra = settings.diceSides === 100 ? rule.ranges.length !== settings.commandCount || rule.commands.some(command => command.trim())
+                    : rule.ranges.length > 0 || rule.commands.slice(settings.commandCount).some(command => command.trim());
+                if (commands.length !== settings.commandCount || commands.some(command => !command.trim()) || extra) {
+                    throw new Error(`每套骰子须按顺序提供 ${settings.commandCount} 条非空指令，且不能包含额外指令。`);
+                }
+                rule.commands = Array(20).fill('');
+                rule.ranges = [];
+                commands.forEach((command, i) => {
+                    const from = settings.mapping === 'even' ? Math.floor(i * settings.diceSides / settings.commandCount) + 1 : i + 1;
+                    const to = settings.mapping === 'even' ? Math.floor((i + 1) * settings.diceSides / settings.commandCount) : from;
+                    if (settings.diceSides === 100) rule.ranges.push({ range: from === to ? String(from) : `${from}-${to}`, command });
+                    else for (let point = from; point <= to; point++) rule.commands[point - 1] = command;
+                });
+            }
             const store = ctx.extensionSettings[SETTINGS_KEY];
             const next = state();
             let group = store.groups.find(item => item.id === next.groupId);
@@ -116,11 +134,12 @@ export function installAutoOracle(getContext, service, {
         state,
         get busy() { return !!task && !task.cancelled; },
         get pending() { return queued; },
-        start({ interval, prompt }) {
+        start({ interval, prompt, commandCount = state().commandCount, ruleCount = state().ruleCount, diceSides = state().diceSides, mapping = state().mapping }) {
             if (!getContext().chat?.length) throw new Error('请先打开一个聊天。');
             if (!Number.isSafeInteger(interval) || interval < 1) throw new Error('生成间隔须为大于等于 1 的整数。');
+            if (![1,2,3,4,5,6,7,8,9,10,20,100].includes(diceSides) || !Number.isSafeInteger(commandCount) || commandCount < 1 || commandCount > diceSides || !Number.isSafeInteger(ruleCount) || ruleCount < 1 || ruleCount > 10 || !['first', 'even'].includes(mapping)) throw new Error('骰子数量须为 1 到 10，指令条数须为 1 到骰子面数。');
             const next = state();
-            Object.assign(next, { enabled: true, interval, prompt, progress: 0 });
+            Object.assign(next, { enabled: true, interval, prompt, commandCount, ruleCount, diceSides, mapping, progress: 0 });
             save(next); seen = new WeakSet(getContext().chat); lastFloor = getContext().chat.length - 1; queued = true;
             onChange(); return pump();
         },
@@ -129,11 +148,12 @@ export function installAutoOracle(getContext, service, {
             cancel('自动生成已关闭，本次请求已取消，已有配置保留。');
             onChange();
         },
-        update({ interval, prompt }) {
+        update({ interval, prompt, commandCount = state().commandCount, ruleCount = state().ruleCount, diceSides = state().diceSides, mapping = state().mapping }) {
             if (!Number.isSafeInteger(interval) || interval < 1) throw new Error('生成间隔须为大于等于 1 的整数。');
+            if (![1,2,3,4,5,6,7,8,9,10,20,100].includes(diceSides) || !Number.isSafeInteger(commandCount) || commandCount < 1 || commandCount > diceSides || !Number.isSafeInteger(ruleCount) || ruleCount < 1 || ruleCount > 10 || !['first', 'even'].includes(mapping)) throw new Error('骰子数量须为 1 到 10，指令条数须为 1 到骰子面数。');
             const next = state();
             if (next.interval !== interval) { next.progress = 0; queued = false; }
-            Object.assign(next, { interval, prompt }); save(next); onChange();
+            Object.assign(next, { interval, prompt, commandCount, ruleCount, diceSides, mapping }); save(next); onChange();
         },
     };
 }

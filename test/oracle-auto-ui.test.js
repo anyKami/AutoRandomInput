@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import test from 'node:test';
-import { SETTINGS_KEY } from '../core.js';
+import { DICE_SIDES, SETTINGS_KEY } from '../core.js';
 import { AUTO_ORACLE_KEY, autoOracleState } from '../oracle-auto-state.js';
 import { mountAutoOracleUI } from '../oracle-auto-ui.js';
 
@@ -13,10 +14,16 @@ function fixture({ chat = [{}] } = {}) {
         focus() {}
         showModal() { this.open = true; }
         close() { this.open = false; }
-        reportValidity() { return this.value.trim() !== '' && Number(this.value) >= 1; }
+        reportValidity() {
+            const value = Number(this.value);
+            return Number.isSafeInteger(value) && value >= 1 && value <= this.max;
+        }
+        max = Infinity;
     }
     const nodes = new Map();
     const node = id => { if (!nodes.has(id)) nodes.set(id, new Element()); return nodes.get(id); };
+    node('rule-count').max = 10;
+    node('command-count').max = 100;
     const dialog = new Element(); dialog.querySelector = id => node(id.replace('#ari-auto-oracle-', ''));
     const ctx = { chat, chatMetadata: {}, extensionSettings: { [SETTINGS_KEY]: { enabled: false } } };
     const calls = [];
@@ -41,6 +48,16 @@ function fixture({ chat = [{}] } = {}) {
     const accept = () => fire('confirm-ok', 'click');
     return { node, fire, enable, accept, ctx, calls, dialog, ui };
 }
+
+test('automatic form exposes the supported dice, mapping choices and numeric bounds', () => {
+    const html = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
+    const dice = html.match(/id="ari-auto-oracle-dice-sides">([^<]*(?:<option[^>]*>[^<]*<\/option>)*)<\/select>/)[1];
+    assert.deepEqual([...dice.matchAll(/<option value="(\d+)"/g)].map(match => Number(match[1])), DICE_SIDES);
+    assert.match(dice, /value="20" selected/);
+    assert.match(html, /id="ari-auto-oracle-command-count"[^>]*min="1"[^>]*max="100"[^>]*value="10"/);
+    assert.match(html, /id="ari-auto-oracle-rule-count"[^>]*min="1"[^>]*max="10"[^>]*value="3"/);
+    assert.match(html, /id="ari-auto-oracle-mapping">\s*<option value="first"[^>]*>[^<]*<\/option>\s*<option value="even"/);
+});
 
 test('no chat disables the switch without enabling or calling anything', () => {
     const h = fixture({ chat: [] });
@@ -68,10 +85,12 @@ test('accepting the notice waits for the prompt and start button before making t
     assert.equal(h.node('form').hidden, false);
     assert.equal(h.node('enabled').checked, false);
     h.node('interval').value = '3'; h.node('prompt').value = '围绕刚才的争执生成指令。';
+    h.node('command-count').value = '4'; h.node('rule-count').value = '2';
+    h.node('dice-sides').value = '6'; h.node('mapping').value = 'even';
     h.fire('prompt', 'input');
     assert.deepEqual(h.calls, []);
     h.fire('form', 'submit');
-    assert.deepEqual(h.calls, [['start', { interval: 3, prompt: '围绕刚才的争执生成指令。' }]]);
+    assert.deepEqual(h.calls, [['start', { interval: 3, prompt: '围绕刚才的争执生成指令。', commandCount: 4, ruleCount: 2, diceSides: 6, mapping: 'even' }]]);
     assert.equal(h.node('enabled').checked, true);
     assert.equal(h.node('start-actions').hidden, true);
     h.fire('form', 'submit');
@@ -80,12 +99,18 @@ test('accepting the notice waits for the prompt and start button before making t
 
 for (const action of ['cancel', 'close', 'switch']) test(`${action} abandons unfinished setup without calling the API`, () => {
     const h = fixture(); h.enable(); h.accept(); h.node('prompt').value = '未保存的要求';
+    h.node('command-count').value = '4'; h.node('rule-count').value = '2';
+    h.node('dice-sides').value = '6'; h.node('mapping').value = 'even';
     if (action === 'cancel') h.fire('setup-cancel', 'click');
     if (action === 'close') h.dialog.dispatchEvent(new Event('close'));
     if (action === 'switch') { h.ctx.chatMetadata = {}; h.ui.refresh(); }
     assert.deepEqual(h.calls, []);
     assert.equal(h.node('form').hidden, true);
     assert.equal(h.node('prompt').value, '');
+    assert.equal(h.node('command-count').value, '10');
+    assert.equal(h.node('rule-count').value, '3');
+    assert.equal(h.node('dice-sides').value, '20');
+    assert.equal(h.node('mapping').value, 'first');
 });
 
 test('invalid interval cannot enable the feature; active edits do not start another request', () => {
@@ -96,9 +121,25 @@ test('invalid interval cannot enable the feature; active edits do not start anot
     h.node('prompt').value = '之后的要求'; h.fire('prompt', 'input');
     h.node('interval').value = '4'; h.fire('interval', 'change');
     assert.equal(h.calls.filter(([name]) => name === 'start').length, 1);
-    assert.deepEqual(h.calls.at(-1), ['update', { interval: 4, prompt: '之后的要求' }]);
+    assert.deepEqual(h.calls.at(-1), ['update', { interval: 4, prompt: '之后的要求', commandCount: 10, ruleCount: 3, diceSides: 20, mapping: 'first' }]);
     h.dialog.dispatchEvent(new Event('close'));
     assert.equal(h.calls.filter(([name]) => name === 'stop').length, 0);
+});
+
+test('active dice controls validate and forward changes without starting again', () => {
+    const h = fixture(); h.enable(); h.accept(); h.fire('form', 'submit');
+    h.node('dice-sides').value = '6'; h.fire('dice-sides', 'change');
+    assert.equal(h.calls.length, 1);
+    assert.match(h.node('result').textContent, /骰子面数/);
+    h.node('command-count').value = '4'; h.fire('command-count', 'change');
+    h.node('rule-count').value = '11'; h.fire('rule-count', 'change');
+    assert.equal(h.calls.length, 2);
+    assert.match(h.node('result').textContent, /骰子数量/);
+    h.node('rule-count').value = '2'; h.fire('rule-count', 'change');
+    h.node('mapping').value = 'even'; h.fire('mapping', 'change');
+    h.node('dice-sides').value = '100'; h.fire('dice-sides', 'change');
+    assert.equal(h.calls.filter(([name]) => name === 'start').length, 1);
+    assert.deepEqual(h.calls.at(-1), ['update', { interval: 5, prompt: '', commandCount: 4, ruleCount: 2, diceSides: 100, mapping: 'even' }]);
 });
 
 test('turning off stops automatic generation and re-enabling asks again', () => {
