@@ -285,6 +285,12 @@ body:has(#ari-workbench[open]) { overflow: hidden; }
 #ari-workbench #ari-import-file { display: block; width: 100%; min-width: 0; font-size: 12px; }
 #ari-workbench #ari-import-preview { padding-left: 20px; font-size: 13px; overflow-wrap: anywhere; }
 #ari-workbench #ari-import-preview:empty { display: none; }
+#ari-workbench #ari-narrative-panel { flex: 1; min-height: 0; overflow-y: auto; overflow-wrap: anywhere; }
+#ari-workbench #ari-narrative-panel button, #ari-workbench details button { min-height: 38px; margin: 4px; }
+#ari-workbench #ari-narrative-panel input:not([type="checkbox"]), #ari-workbench #ari-narrative-panel select,
+#ari-workbench details input, #ari-workbench details select { max-width: 100%; min-height: 36px; margin: 4px; }
+#ari-workbench #ari-narrative-panel section { border-top: 1px solid var(--ari-border); padding: 12px 0; }
+#ari-workbench details > div > div { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
 @media (max-width: 640px) {
     #ari-transfer-panel { padding: 16px; }
     #ari-workbench .ari-transfer-grid { grid-template-columns: minmax(0, 1fr); gap: 12px; }

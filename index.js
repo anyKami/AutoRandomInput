@@ -11,6 +11,8 @@ import { mountOracleUI } from './oracle-ui.js';
 import { effectiveRandomSettings, selectRandomGroup } from './oracle-auto-state.js';
 import { installAutoOracle } from './oracle-auto.js';
 import { mountAutoOracleUI } from './oracle-auto-ui.js';
+import { mountMetadataEditor, mountNarrativeUI } from './narrative-ui.js';
+import { foldNarrative } from './narrative.js';
 
 const context = () => SillyTavern.getContext();
 const settings = () => context().extensionSettings[SETTINGS_KEY];
@@ -25,6 +27,7 @@ let skillUI;
 let oracleSettingsUI;
 let oracleUI;
 let autoOracleUI;
+let narrativeUI;
 const $ = selector => dialog.querySelector(selector);
 const selectedRule = () => {
     const group = currentGroup();
@@ -67,7 +70,8 @@ function renderLastRoll() {
         item.innerHTML = '<strong class="ari-roll-number"></strong><div><span></span><small></small></div>';
         item.querySelector('strong').textContent = roll.error ? '—' : String(roll.result).padStart(2, '0');
         item.querySelector('span').textContent = `${roll.ruleName} · d${roll.sides}`;
-        item.querySelector('small').textContent = roll.error ? `未投掷：${roll.error}`
+        const reasons = { blank: '空白，已跳过', invalid_ranges: '范围配置错误', conditions: '条件不满足或 MVU 未就绪', needs_binding: '等待绑定剧情线', thread_inactive: '剧情线未活跃', blocked_topic: '主题已屏蔽', cooldown: '主题冷却中', budget: '预算不足', duplicate_topic: '本轮主题重复', duplicate_thread: '本轮剧情线重复', selected: '已注入', persistent: '常驻已注入' };
+        item.querySelector('small').textContent = roll.reason ? (reasons[roll.reason] ?? roll.reason) : roll.error ? `未投掷：${roll.error}`
             : roll.sides === 100 ? (roll.uncovered ? '未覆盖此骰点，已跳过' : `命中 ${roll.range}${roll.skipped ? ' · 空白，已跳过' : ''}`)
                 : roll.skipped ? '空白，已跳过' : `命中第 ${roll.result} 条`;
         list.append(item);
@@ -136,6 +140,8 @@ function renderRanges() {
             const next = list.querySelectorAll('input')[Math.min(index, rule.ranges.length - 1)];
             (next ?? $('#ari-add-range')).focus();
         });
+        mountMetadataEditor(row, () => entry.metadata, value => { entry.metadata = value; save(); },
+            { getThreads: () => foldNarrative(context().chat).threads });
         list.append(row);
     });
 }
@@ -206,6 +212,8 @@ function renderCommands() {
             save();
         });
         update();
+        mountMetadataEditor(card, () => rule.commandMetadata[index], value => { rule.commandMetadata[index] = value; save(); },
+            { persistentAllowed: rule.diceSides === 1, getThreads: () => foldNarrative(context().chat).threads });
         grid.append(card);
     });
     if (rule.diceSides === 100) renderRanges();
@@ -234,6 +242,7 @@ function render() {
     oracleSettingsUI?.refresh();
     oracleUI?.refreshCaps();
     autoOracleUI?.refresh();
+    narrativeUI?.refresh();
 }
 
 function closeGroupForm() {
@@ -291,7 +300,7 @@ function submitGroup(event) {
 }
 
 function bindUI() {
-    const tabs = ['random', 'skills', 'settings'];
+    const tabs = ['random', 'narrative', 'skills', 'settings'];
     const selectTab = name => {
         for (const tab of tabs) {
             const selected = tab === name;
@@ -301,6 +310,7 @@ function bindUI() {
         }
         $('.ari-master').hidden = name !== 'random';
         if (name === 'skills') skillUI?.render();
+        if (name === 'narrative') narrativeUI?.refresh();
         if (name === 'settings') { oracleSettingsUI?.refresh(); autoOracleUI?.refresh(); }
     };
     for (const name of tabs) {
@@ -378,7 +388,7 @@ async function init() {
     ctx.extensionSettings[ORACLE_SETTINGS_KEY] = normalizeOracleSettings(ctx.extensionSettings[ORACLE_SETTINGS_KEY]);
     save();
     skillService = installSkillService(context, () => skillUI?.refresh());
-    await installSendHooks(context, () => { renderLastRoll(); skillUI?.refresh(); }, undefined, undefined, skillService);
+    await installSendHooks(context, () => { renderLastRoll(); skillUI?.refresh(); narrativeUI?.refresh(); }, undefined, undefined, skillService);
     // On hosts with display hooks, hide before Markdown/HTML encoding; never modify the prompt here.
     if (ctx.messageFormatter?.addHook) {
         ctx.messageFormatter.addHook((text, meta) => meta.isUser
@@ -394,6 +404,7 @@ async function init() {
     dialog = document.getElementById('ari-workbench');
     bindUI();
     skillUI = mountSkillUI(dialog, context, skillService);
+    narrativeUI = mountNarrativeUI(dialog, context);
     const oracleGate = createOracleRequestGate();
     const oracleService = createOracleService(context, skillService, globalThis, { gate: oracleGate });
     oracleSettingsUI = mountOracleSettings(dialog, context, oracleService);

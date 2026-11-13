@@ -3,10 +3,27 @@ export const THEMES = { navy: '深海蓝', graphite: '石墨黑', forest: '森�
 export const DICE_SIDES = [...Array.from({ length: 10 }, (_, index) => index + 1), 20, 100];
 export const MAX_COMMANDS = 20;
 
+export const NARRATIVE_TOPICS = ['daily', 'relationship', 'clue', 'opportunity', 'obstacle', 'conflict', 'callback', 'atmosphere', 'general'];
+
+// Metadata lives next to the old string slots so existing configurations and
+// integrations can continue treating commands as strings.
+export function normalizeCommandMetadata(value) {
+    const source = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+    return {
+        effect: source.effect === 'detail' ? 'detail' : 'event',
+        topic: NARRATIVE_TOPICS.includes(source.topic) ? source.topic : 'general',
+        conditions: Array.isArray(source.conditions) ? structuredClone(source.conditions) : [],
+        ...(typeof source.threadId === 'string' && source.threadId ? { threadId: source.threadId } : {}),
+        ...(source.needsBinding === true ? { needsBinding: true } : {}),
+        ...(source.persistent === true ? { persistent: true } : {}),
+    };
+}
+
 function normalizeRanges(ranges) {
     return (Array.isArray(ranges) ? ranges : []).map(row => ({
         range: typeof row?.range === 'string' ? row.range : '',
         command: typeof row?.command === 'string' ? row.command : '',
+        ...(row?.metadata ? { metadata: normalizeCommandMetadata(row.metadata) } : {}),
     }));
 }
 
@@ -48,6 +65,7 @@ export function createRule(name, source) {
         enabled: source?.enabled !== false,
         diceSides: source?.diceSides ?? 10,
         commands: Array.from({ length: MAX_COMMANDS }, (_, index) => source?.commands?.[index] ?? ''),
+        commandMetadata: Array.from({ length: MAX_COMMANDS }, (_, index) => normalizeCommandMetadata(source?.commandMetadata?.[index])),
         ranges: normalizeRanges(source?.ranges),
     };
 }
@@ -104,6 +122,7 @@ export function normalizeSettings(value = {}) {
                 enabled: rule?.enabled !== false,
                 diceSides: DICE_SIDES.includes(rule?.diceSides) ? rule.diceSides : 10,
                 commands: Array.from({ length: MAX_COMMANDS }, (_, slot) => typeof rule?.commands?.[slot] === 'string' ? rule.commands[slot] : ''),
+                commandMetadata: Array.from({ length: MAX_COMMANDS }, (_, slot) => normalizeCommandMetadata(rule?.commandMetadata?.[slot])),
                 ranges: normalizeRanges(rule?.ranges),
             })),
         }));
@@ -137,7 +156,7 @@ export function rollDice(sides, random = Math.random) {
     return Math.floor(random() * sides) + 1;
 }
 
-function makeBlock(command, stealth) {
+export function makeBlock(command, stealth) {
     if (!command.trim()) return { block: '', display: '' };
     if (stealth) {
         // HTML comments must never contain a closing delimiter, including --!>.

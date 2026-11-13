@@ -398,3 +398,60 @@ test('automatic requests serialize and coalesce multiple elapsed intervals into 
     assert.equal(calls, 2); assert.equal(h.controller.pending, false);
     assert.equal(h.store.groups.length, 2);
 });
+
+test('a delayed oracle response cannot replace candidates when the selected scene changes', async () => {
+    const response = deferred();
+    const h = fixture({ run: () => response.promise });
+    const { NARRATIVE_KEY, foldNarrative } = await import('../narrative.js');
+    h.ctx.chatMetadata[NARRATIVE_KEY] = { enabled: true, threadsEnabled: true };
+    const initialRevision = foldNarrative(h.ctx.chat).revision;
+    h.ctx.chat.push({ is_user: true, mes: '查看桌上的物件', extra: { [SETTINGS_KEY]: { narrative: {
+        turnId: 'turn', newThreadId: 'thread', baseRevision: initialRevision, candidates: [],
+    } } } });
+    h.ctx.chat.push({ ...reply('他发现一枚蓝签。'), swipe_id: 0, extra: { [NARRATIVE_KEY]: {
+        uid: 'reply', swipes: { 0: { report: {
+            version: 1, turnId: 'turn', baseRevision: initialRevision, uses: [], updates: [],
+            newThread: { title: '蓝签来历', cause: '发现一枚蓝签', question: '谁留下的？', evidence: '他发现一枚蓝签。' },
+        } }, 1: {} },
+    } } });
+    const start = h.start(2);
+    await tick();
+    assert.equal(h.requests.length, 1);
+    assert.match(h.requests[0][0].map(message => message.content).join('\n'), /蓝签来历/);
+    const groupCount = h.store.groups.length;
+    h.ctx.chatMetadata[NARRATIVE_KEY].sceneRevision = 'new-scene';
+    response.resolve(JSON.stringify(autoBundle()));
+    await start;
+    await tick();
+    assert.equal(h.requests.length, 1);
+    assert.equal(h.store.groups.length, groupCount);
+    assert.equal(h.ctx.chatMetadata[NARRATIVE_KEY].sceneGroupId, undefined);
+});
+
+test('oracle initializes the MVU scene on first request and drops a response after the MVU location changes', async t => {
+    const { NARRATIVE_KEY } = await import('../narrative.js');
+    let position = '阅览区';
+    globalThis.Mvu = { getMvuData: () => ({ stat_data: { 场景: { 位置: position } } }) };
+    t.after(() => { delete globalThis.Mvu; });
+    for (const changesDuringRequest of [false, true]) {
+        position = '阅览区';
+        const response = deferred();
+        const h = fixture({ run: () => response.promise });
+        h.ctx.chatMetadata[NARRATIVE_KEY] = { enabled: true, scenePath: 'stat_data.场景.位置' };
+        const oldGroups = h.store.groups.length;
+        const started = h.start(2);
+        await tick();
+        assert.equal(h.requests.length, 1);
+        assert.equal(h.ctx.chatMetadata[NARRATIVE_KEY].sceneValue, '阅览区');
+        if (changesDuringRequest) position = '门厅';
+        response.resolve(JSON.stringify(autoBundle()));
+        await started;
+        await tick();
+        const scene = h.ctx.chatMetadata[NARRATIVE_KEY];
+        assert.equal(scene.sceneValue, position);
+        assert.equal(h.store.groups.length, oldGroups + Number(!changesDuringRequest));
+        if (changesDuringRequest) assert.equal(scene.sceneGroupId, null);
+        else assert.equal(scene.sceneGroupRevision, scene.sceneRevision);
+        assert.equal(h.requests.length, 1);
+    }
+});

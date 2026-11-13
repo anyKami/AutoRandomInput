@@ -102,7 +102,7 @@ test('optional fields have documented defaults; current auto budget is recalcula
 
 const invalidCases = [
     ['wrong format', b => { b.format = 'other'; }, /format/],
-    ['unsupported version', b => { b.formatVersion = 2; }, /formatVersion/],
+    ['unsupported version', b => { b.formatVersion = 3; }, /formatVersion/],
     ['string version', b => { b.formatVersion = '1'; }, /formatVersion/],
     ['empty file', b => { b.randomGroups = []; b.skillGroups = []; }, /至少/],
     ['bad group container', b => { b.randomGroups = null; }, /数组/],

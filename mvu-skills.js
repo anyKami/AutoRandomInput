@@ -1,6 +1,7 @@
 import { SKILL_FIELD, SKILL_NAMESPACE, SKILL_PATH, SKILL_SETTINGS_KEY, createSkillTurn, isObject, normalizeSkillSettings,
     readSkillSelection, requestBefore, skillBlocks, skillErrors, unwrap, validateSelection,
     SKILL_VERSION, skillPacket } from './skills.js';
+import { NARRATIVE_KEY, REPORT_FIELD, REPORT_PATH, narrativeId, validateNarrativeReport } from './narrative.js';
 
 export function mvuApi(host = globalThis) {
     if (typeof host.Mvu?.getMvuData === 'function') return host.Mvu;
@@ -27,13 +28,13 @@ function commandPath(command) {
     }
     return path;
 }
-function writePacket(variables, packet) {
+function writePacket(variables, packet, field = SKILL_FIELD) {
     const root = variables.stat_data;
     if (!isObject(root)) return false;
     if (!Object.hasOwn(root, SKILL_NAMESPACE)) root[SKILL_NAMESPACE] = {};
     const namespace = unwrap(root[SKILL_NAMESPACE]);
     if (!isObject(namespace)) return false;
-    namespace[SKILL_FIELD] = packet;
+    namespace[field] = packet;
     return true;
 }
 
@@ -115,26 +116,30 @@ export function installSkillService(getContext, onChange = () => {}, host = glob
         // field so strict schemas cannot reject it before the new selection is merged back.
         const inherited = unwrap(variables.stat_data?.[SKILL_NAMESPACE]);
         const previous = unwrap(inherited?.[SKILL_FIELD]);
-        if (isObject(inherited) && Object.hasOwn(inherited, SKILL_FIELD)) {
+        const previousReport = unwrap(inherited?.[REPORT_FIELD]);
+        if (isObject(inherited)) {
             delete inherited[SKILL_FIELD];
+            delete inherited[REPORT_FIELD];
             if (!Object.keys(inherited).length) delete variables.stat_data[SKILL_NAMESPACE];
         }
-        const owned = [];
+        const owned = [], narrativeOwned = [];
         for (let i = 0; i < commands.length;) {
             const command = commands[i];
             const path = commandPath(command);
             if (path === SKILL_NAMESPACE && ['set', 'replace', 'insert', 'add'].includes(command.type ?? command.op)) {
                 let value;
                 try { value = parseValue(command.value ?? command.args?.at(-1)); } catch { i++; continue; }
-                if (!isObject(value) || !Object.hasOwn(value, SKILL_FIELD)) { i++; continue; }
-                const { [SKILL_FIELD]: packet, ...rest } = value;
-                owned.push({ op: 'set', path: SKILL_PATH, value: unwrap(packet) });
+                if (!isObject(value) || (!Object.hasOwn(value, SKILL_FIELD) && !Object.hasOwn(value, REPORT_FIELD))) { i++; continue; }
+                const { [SKILL_FIELD]: packet, [REPORT_FIELD]: report, ...rest } = value;
+                if (Object.hasOwn(value, SKILL_FIELD)) owned.push({ op: 'set', path: SKILL_PATH, value: unwrap(packet) });
+                if (Object.hasOwn(value, REPORT_FIELD)) narrativeOwned.push({ op: 'set', path: REPORT_PATH, value: unwrap(report) });
                 if (Object.keys(rest).length) {
                     if (Object.hasOwn(command, 'value')) command.value = typeof command.value === 'string' ? JSON.stringify(rest) : rest;
                     if (command.args) command.args = [...command.args.slice(0, -1), JSON.stringify(rest)];
                     i++; continue;
                 }
             } else if (path === SKILL_PATH || path.startsWith(SKILL_PATH + '.')) owned.push(command);
+            else if (path === REPORT_PATH || path.startsWith(REPORT_PATH + '.')) narrativeOwned.push(command);
             else { i++; continue; }
             // Keep card commands and any sibling fields in a parent namespace write.
             commands.splice(i, 1);
@@ -149,21 +154,48 @@ export function installSkillService(getContext, onChange = () => {}, host = glob
             try { value = parseValue(command.value ?? command.args?.at(-1)); }
             catch { lastError = '技能判定不是可读取的 JSON，请检查 MVU 内容。'; }
         }
-        if (!isObject(value)) return;
-        const packet = validateSelection(value, request);
-        packet._source = owned.length ? { messageId: index, swipeId: ctx.chat[index]?.swipe_id ?? 0 } : previous?._source;
-        frames.set(variables, { chat: ctx.chat, packet });
+        const packet = isObject(value) ? validateSelection(value, request) : null;
+        if (packet) packet._source = owned.length ? { messageId: index, swipeId: ctx.chat[index]?.swipe_id ?? 0 } : previous?._source;
+        let report = previousReport;
+        for (const command of narrativeOwned) {
+            if (commandPath(command) !== REPORT_PATH || !['set', 'replace', 'insert', 'add'].includes(command.type ?? command.op)) continue;
+            try { report = parseValue(command.value ?? command.args?.at(-1)); } catch { report = null; }
+        }
+        const reportWritten = narrativeOwned.some(command => commandPath(command) === REPORT_PATH && ['set', 'replace', 'insert', 'add'].includes(command.type ?? command.op));
+        const reply = index >= 0 ? ctx.chat[index] : null;
+        let uid = reply?.extra?.[NARRATIVE_KEY]?.uid;
+        if (reportWritten && reply) {
+            reply.extra ??= {};
+            const data = reply.extra[NARRATIVE_KEY] ??= { uid: narrativeId(), swipes: {} };
+            uid = data.uid;
+        }
+        frames.set(variables, { chat: ctx.chat, packet, report, reportWritten, index, content, reply, uid, swipeId: reply?.swipe_id ?? 0 });
     };
     const beforeWrite = context => {
         const frame = frames.get(context?.variables);
         if (!frame) return;
         frames.delete(context.variables);
         const ctx = getContext();
-        const { packet } = frame;
+        const { packet, report, reportWritten, index, content, reply, uid, swipeId } = frame;
         if (ctx.chat !== frame.chat) return;
+        const sameReply = !!reply && ctx.chat[index] === reply && (reply.swipe_id ?? 0) === swipeId && reply.extra?.[NARRATIVE_KEY]?.uid === uid && reply.mes === content;
+        const turn = sameReply ? ctx.chat.slice(0, index).findLast(message => message.is_user && !message.is_system)?.extra?.auto_random_input?.narrative : null;
+        const validReport = !!(reportWritten && sameReply && turn && validateNarrativeReport(report, turn, content).valid);
         // This event follows the card's Zod validation. Preserve all non-owned fields.
-        if (!writePacket(context.variables, packet)) lastError = 'MVU 中的随机指令工作台字段不是对象，未覆盖原值。';
+        if ((packet && !writePacket(context.variables, packet)) || (isObject(report) && (!reportWritten || validReport) && !writePacket(context.variables, report, REPORT_FIELD))) lastError = 'MVU 中的随机指令工作台字段不是对象，未覆盖原值。';
         else lastError = '';
+        if (sameReply) {
+            if (validReport) {
+                reply.extra ??= {};
+                const data = reply.extra[NARRATIVE_KEY] ??= { uid: narrativeId(), swipes: {} };
+                const swipe = String(reply.swipe_id ?? 0);
+                data.swipes[swipe] = { ...data.swipes[swipe], report };
+                void ctx.saveChat?.();
+            } else {
+                const entry = reply.extra?.[NARRATIVE_KEY]?.swipes?.[String(swipeId)];
+                if (entry && Object.hasOwn(entry, 'report')) { delete entry.report; void ctx.saveChat?.(); }
+            }
+        }
         setTimeout(onChange, 0);
     };
     const events = getContext().eventSource;

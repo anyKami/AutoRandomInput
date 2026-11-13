@@ -5,7 +5,7 @@
         <path d="M20 2 38 13v18L20 42 2 31V13L20 2Z M2 13l18 10 18-10 M20 23v19 M20 2v21" />
         <circle cx="20" cy="23" r="3" />
       </svg>
-      <div><span class="ari-eyebrow">AUTO RANDOM INPUT</span><h2 id="ari-title">随机指令工作台 3.1</h2></div>
+      <div><span class="ari-eyebrow">AUTO RANDOM INPUT</span><h2 id="ari-title">随机指令工作台 3.2</h2></div>
     </div>
     <div class="ari-header-actions">
       <button id="ari-transfer-toggle" type="button" aria-expanded="false" aria-controls="ari-transfer-panel">导入 / 导出</button>
@@ -16,6 +16,7 @@
 
   <nav class="ari-tabs" role="tablist" aria-label="工作台功能">
     <button id="ari-tab-random" type="button" role="tab" aria-selected="true" aria-controls="ari-random-panel">随机指令</button>
+    <button id="ari-tab-narrative" type="button" role="tab" aria-selected="false" aria-controls="ari-narrative-panel" tabindex="-1">剧情增强</button>
     <button id="ari-tab-skills" type="button" role="tab" aria-selected="false" aria-controls="ari-skills-panel" tabindex="-1">技能检定</button>
     <button id="ari-tab-settings" type="button" role="tab" aria-selected="false" aria-controls="ari-settings-panel" tabindex="-1">设置</button>
   </nav>
@@ -76,6 +77,7 @@
     </section>
   </div>
 
+  <div id="ari-narrative-panel" class="ari-editor" role="tabpanel" aria-labelledby="ari-tab-narrative" hidden></div>
   <div id="ari-skills-panel" class="ari-layout" role="tabpanel" aria-labelledby="ari-tab-skills" hidden>
     <aside class="ari-sidebar">
       <button id="ari-generate-skills" type="button" class="ari-primary ari-generate-entry">✦ 神谕生成</button>

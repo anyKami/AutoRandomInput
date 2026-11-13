@@ -1,7 +1,7 @@
 {
   "display_name": "随机指令",
-  "description": "随机指令工作台 3.1：按 AI 楼层自动生成随机指令、故事神谕生成配置、配置导入导出、技能加值与 DC 检定、d100 范围指令。",
-  "version": "3.1.0",
+  "description": "随机指令工作台 3.2：剧情增强、持续剧情线、故事神谕、配置导入导出和技能检定。",
+  "version": "3.2.0",
   "author": "anyKami",
   "homepage": "https://github.com/anyKami/AutoRandomInput",
   "loading_order": 30,
