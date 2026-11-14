@@ -1,9 +1,51 @@
-import { createGroup, DICE_SIDES, MAX_COMMANDS, uniqueName, validateCommandRanges } from './core.js';
+import { createGroup, DICE_SIDES, MAX_COMMANDS, NARRATIVE_TOPICS, normalizeCommandMetadata, uniqueName, validateCommandRanges } from './core.js';
 import { createSkillGroup } from './skill-groups.js';
 import { isObject, recommendedPointLimit, skillErrors, SKILL_DICE, SKILL_VERSION } from './skills.js';
 
 export const CONFIG_FORMAT = 'auto-random-input';
-export const CONFIG_FORMAT_VERSION = 1;
+export const CONFIG_FORMAT_VERSION = 2;
+
+function metadataOf(value, path) {
+    if (value === undefined || value === null) return undefined;
+    requireValue(isObject(value), path, 'metadata 须为对象。');
+    requireValue(value.effect === undefined || ['event', 'detail'].includes(value.effect), path, 'effect 无效。');
+    requireValue(value.topic === undefined || NARRATIVE_TOPICS.includes(value.topic), path, 'topic 无效。');
+    requireValue(value.conditions === undefined || Array.isArray(value.conditions), path, 'conditions 须为数组。');
+    requireValue((value.conditions?.length ?? 0) <= 20, path, 'conditions 最多 20 项。');
+    for (const [index, condition] of (value.conditions ?? []).entries()) {
+        const location = `${path}条件 ${index + 1}`;
+        requireValue(isObject(condition), location, '须为机器条件对象，不能填写自然语言字符串。');
+        if (condition.type === 'stat') {
+            requireValue(typeof condition.path === 'string' && /^stat_data\.[^.]+(?:\.[^.]+)*$/.test(condition.path) &&
+                !condition.path.split('.').some(part => ['__proto__', 'prototype', 'constructor'].includes(part)), location, 'path 须为 stat_data. 开头的精确变量路径。');
+            requireValue(['eq', 'ne', 'gt', 'gte', 'lt', 'lte', 'contains'].includes(condition.op), location, 'op 不受支持。');
+            requireValue(['string', 'number', 'boolean'].includes(typeof condition.value) &&
+                (typeof condition.value !== 'number' || Number.isFinite(condition.value)), location, 'value 须为有限数字、文字或布尔值。');
+            requireValue(!['gt', 'gte', 'lt', 'lte'].includes(condition.op) || typeof condition.value === 'number', location, '大小比较须使用数字。');
+        } else if (condition.type === 'label') {
+            requireValue(typeof condition.value === 'string' && !!condition.value.trim(), location, '场景标签 value 须为非空文字。');
+        } else if (condition.type === 'thread') {
+            requireValue((typeof condition.threadId === 'string' && !!condition.threadId) || value.needsBinding === true, location, '须提供 threadId，或标记 needsBinding。');
+            requireValue(['active', 'paused', 'completed'].includes(condition.status), location, '剧情线状态不受支持。');
+        } else requireValue(false, location, 'type 须为 stat、label 或 thread。');
+    }
+    requireValue(value.threadId === undefined || typeof value.threadId === 'string', path, 'threadId 须为文字。');
+    requireValue(value.needsBinding === undefined || typeof value.needsBinding === 'boolean', path, 'needsBinding 须为布尔值。');
+    requireValue(value.persistent === undefined || typeof value.persistent === 'boolean', path, 'persistent 须为布尔值。');
+    return normalizeCommandMetadata(value);
+}
+
+function portableMetadata(value) {
+    if (!value) return value;
+    const { threadId, ...rest } = value;
+    let needsBinding = !!threadId || rest.needsBinding;
+    const conditions = rest.conditions?.map(condition => {
+        if (!isObject(condition) || condition.type !== 'thread' || !condition.threadId) return condition;
+        const { threadId: unused, ...portable } = condition;
+        needsBinding = true; return portable;
+    });
+    return { ...rest, ...(conditions ? { conditions } : {}), ...(needsBinding ? { needsBinding: true } : {}) };
+}
 
 function requireValue(condition, path, message) {
     if (!condition) throw new Error(`${path}：${message}`);
@@ -38,15 +80,19 @@ function randomGroup(group, index) {
         const ranges = arrayOf(rule.ranges, `${location}的 ranges`, true).map((row, i) => {
             requireValue(isObject(row) && typeof row.range === 'string' && typeof row.command === 'string',
                 `${location}范围 ${i + 1}`, 'range 和 command 均须为文字。');
-            return { range: row.range, command: row.command };
+            const metadata = metadataOf(row.metadata, `${location}范围 ${i + 1} metadata`);
+            return { range: row.range, command: row.command, ...(metadata ? { metadata } : {}) };
         });
+        const commandMetadata = arrayOf(rule.commandMetadata, `${location}的 commandMetadata`, true);
+        requireValue(commandMetadata.length <= MAX_COMMANDS, location, `commandMetadata 最多 ${MAX_COMMANDS} 条。`);
         // Inactive range drafts must survive a round trip, just as they do in the editor.
         if (rule.diceSides === 100) {
             const validation = validateCommandRanges(ranges);
             requireValue(validation.valid, location, validation.errors.map(error => error.message).join('\n'));
         }
         return { name: ruleName, enabled: rule.enabled ?? true, diceSides: rule.diceSides,
-            commands: Array.from({ length: MAX_COMMANDS }, (_, i) => commands[i] ?? ''), ranges };
+            commands: Array.from({ length: MAX_COMMANDS }, (_, i) => commands[i] ?? ''), ranges,
+            ...(commandMetadata.length ? { commandMetadata: commandMetadata.map((meta, i) => metadataOf(meta, `${location}命令 ${i + 1} metadata`) ?? null) } : {}) };
     }) };
 }
 
@@ -83,7 +129,7 @@ function skillGroup(group, index) {
 export function validateConfigBundle(value) {
     requireValue(isObject(value), '配置文件', '根节点须为对象。');
     requireValue(value.format === CONFIG_FORMAT, '配置文件', `format 须为 ${CONFIG_FORMAT}。`);
-    requireValue(value.formatVersion === CONFIG_FORMAT_VERSION, '配置文件', '仅支持 formatVersion 为 1 的文件。');
+    requireValue([1, CONFIG_FORMAT_VERSION].includes(value.formatVersion), '配置文件', '仅支持 formatVersion 为 1 或 2 的文件。');
     const randomGroups = arrayOf(value.randomGroups, 'randomGroups', true).map(randomGroup);
     const skillGroups = arrayOf(value.skillGroups, 'skillGroups', true).map(skillGroup);
     requireValue(randomGroups.length + skillGroups.length > 0, '配置文件', '至少选择或填写一个配置组。');
@@ -98,8 +144,12 @@ export function parseConfigFile(text) {
 }
 
 export function serializeConfigFile(randomGroups = [], skillGroups = []) {
-    return JSON.stringify(validateConfigBundle({ format: CONFIG_FORMAT, formatVersion: CONFIG_FORMAT_VERSION,
-        randomGroups, skillGroups }), null, 2) + '\n';
+    const validated = validateConfigBundle({ format: CONFIG_FORMAT, formatVersion: CONFIG_FORMAT_VERSION, randomGroups, skillGroups });
+    randomGroups = validated.randomGroups.map(group => ({ ...group, rules: group.rules.map(rule => ({ ...rule,
+        commandMetadata: rule.commandMetadata?.map(portableMetadata),
+        ranges: rule.ranges?.map(row => ({ ...row, ...(row.metadata ? { metadata: portableMetadata(row.metadata) } : {}) })),
+    })) }));
+    return JSON.stringify({ ...validated, randomGroups }, null, 2) + '\n';
 }
 
 export function previewConfigImport(bundle, randomGroups, skillGroups) {
@@ -118,7 +168,10 @@ export function previewConfigImport(bundle, randomGroups, skillGroups) {
 
 export function importConfigBundle(bundle, randomSettings, skillLibrary) {
     const preview = previewConfigImport(bundle, randomSettings.groups, skillLibrary.groups);
-    const randomGroups = preview.randomGroups.map(group => createGroup(group.name, group));
+    const randomGroups = preview.randomGroups.map(group => createGroup(group.name, { ...group, rules: group.rules.map(rule => ({ ...rule,
+        commandMetadata: rule.commandMetadata?.map(portableMetadata),
+        ranges: rule.ranges.map(row => ({ ...row, ...(row.metadata ? { metadata: portableMetadata(row.metadata) } : {}) })),
+    })) }));
     // Construct saved groups using the current skill rules format.
     const skillGroups = preview.skillGroups.map(group => createSkillGroup(group.name, { ...group, version: SKILL_VERSION }));
     const nextRandom = [...randomSettings.groups, ...randomGroups];

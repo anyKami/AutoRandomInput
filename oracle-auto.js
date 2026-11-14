@@ -1,6 +1,8 @@
 import { SETTINGS_KEY, createGroup, createRule, uniqueGroupName } from './core.js';
 import { ORACLE_SETTINGS_KEY, validateGeneratedConfig } from './oracle-config.js';
 import { autoOracleState, saveAutoOracleState } from './oracle-auto-state.js';
+import { narrativeConfig, refreshNarrativeScene, saveNarrativeConfig } from './narrative.js';
+import { mvuApi } from './mvu-skills.js';
 
 const SAME_FLOOR = new Set(['regenerate', 'swipe', 'continue', 'append', 'appendFinal', 'first_message', 'quiet', 'impersonate']);
 const chatKey = ctx => JSON.stringify([ctx.groupId != null ? null : ctx.characterId, ctx.groupId, ctx.chatId]);
@@ -33,7 +35,16 @@ export function installAutoOracle(getContext, service, {
         // Count the next interval from this attempt, including when the API fails.
         settings.progress = 0;
         save(settings);
-        const job = { cancelled: false };
+        const narrative = narrativeConfig(ctx);
+        // Establish the current scene before capturing the job's revision;
+        // otherwise the first read of a newly bound path looks like an
+        // in-flight scene change and discards a successful generation.
+        if (narrative.enabled && narrative.scenePath) {
+            let data;
+            try { data = mvuApi()?.getMvuData({ type: 'message', message_id: ctx.chat.length - 1 }); } catch { /* unavailable: retain current revision */ }
+            refreshNarrativeScene(ctx, narrative, data);
+        }
+        const job = { cancelled: false, sceneRevision: narrative.sceneRevision, sceneGroupId: narrative.sceneGroupId };
         task = job; onChange();
         try {
             const draft = await service.generate('random', { ...ctx.extensionSettings[ORACLE_SETTINGS_KEY], randomDice: settings.diceSides, ruleCount: settings.ruleCount }, settings.prompt, undefined, { commandCount: settings.commandCount });
@@ -41,26 +52,39 @@ export function installAutoOracle(getContext, service, {
             if (draft.error) throw new Error(draft.error);
             const generated = validateGeneratedConfig(draft.value, 'random', draft.options).randomGroups[0];
             for (const rule of generated.rules) {
-                const commands = settings.diceSides === 100
-                    ? rule.ranges.map((row, i) => row.range === String(i + 1) ? row.command : '')
-                    : rule.commands.slice(0, settings.commandCount);
+                const entries = settings.diceSides === 100
+                    ? rule.ranges.map((row, i) => ({ command: row.range === String(i + 1) ? row.command : '', metadata: row.metadata }))
+                    : rule.commands.slice(0, settings.commandCount).map((command, i) => ({ command, metadata: rule.commandMetadata?.[i] }));
+                const commands = entries.map(entry => entry.command);
                 const extra = settings.diceSides === 100 ? rule.ranges.length !== settings.commandCount || rule.commands.some(command => command.trim())
                     : rule.ranges.length > 0 || rule.commands.slice(settings.commandCount).some(command => command.trim());
                 if (commands.length !== settings.commandCount || commands.some(command => !command.trim()) || extra) {
                     throw new Error(`每套骰子须按顺序提供 ${settings.commandCount} 条非空指令，且不能包含额外指令。`);
                 }
                 rule.commands = Array(20).fill('');
+                rule.commandMetadata = Array(20).fill(null);
                 rule.ranges = [];
                 commands.forEach((command, i) => {
                     const from = settings.mapping === 'even' ? Math.floor(i * settings.diceSides / settings.commandCount) + 1 : i + 1;
                     const to = settings.mapping === 'even' ? Math.floor((i + 1) * settings.diceSides / settings.commandCount) : from;
-                    if (settings.diceSides === 100) rule.ranges.push({ range: from === to ? String(from) : `${from}-${to}`, command });
-                    else for (let point = from; point <= to; point++) rule.commands[point - 1] = command;
+                    const metadata = entries[i].metadata;
+                    if (metadata?.persistent) throw new Error('自动生成不能创建常驻指令。');
+                    if (settings.diceSides === 100) rule.ranges.push({ range: from === to ? String(from) : `${from}-${to}`, command, ...(metadata ? { metadata } : {}) });
+                    else for (let point = from; point <= to; point++) { rule.commands[point - 1] = command; rule.commandMetadata[point - 1] = metadata; }
                 });
             }
             const store = ctx.extensionSettings[SETTINGS_KEY];
             const next = state();
-            let group = store.groups.find(item => item.id === next.groupId);
+            const currentNarrative = narrativeConfig(ctx);
+            if (currentNarrative.enabled && currentNarrative.scenePath) {
+                let data;
+                try { data = mvuApi()?.getMvuData({ type: 'message', message_id: ctx.chat.length - 1 }); } catch { /* unavailable: retain current revision */ }
+                refreshNarrativeScene(ctx, currentNarrative, data);
+            }
+            if (currentNarrative.enabled !== narrative.enabled || (narrative.enabled &&
+                (currentNarrative.sceneRevision !== job.sceneRevision || currentNarrative.sceneGroupId !== job.sceneGroupId || currentNarrative.longGroupId !== narrative.longGroupId))) return;
+            let group = store.groups.find(item => item.id === (narrative.enabled ? currentNarrative.sceneGroupId : next.groupId));
+            if (narrative.enabled && group?.id === currentNarrative.longGroupId) group = null;
             if (group) {
                 const rules = generated.rules.map(rule => createRule(rule.name, rule));
                 group.rules = rules;
@@ -70,7 +94,8 @@ export function installAutoOracle(getContext, service, {
                 store.groups.push(group);
             }
             next.groupId = group.id;
-            next.useGroup = true;
+            next.useGroup = !narrative.enabled;
+            if (narrative.enabled) { currentNarrative.sceneGroupId = group.id; currentNarrative.sceneGroupRevision = job.sceneRevision; currentNarrative.configVersion++; saveNarrativeConfig(ctx, currentNarrative); }
             job.applied = true;
             const message = `已更新并选用“${group.name}”，共 ${group.rules.length} 套指令。${store.enabled ? '' : '随机指令总开关关闭，发送时不会追加。'}`;
             next.lastResult = { kind: 'success', message, at: Date.now() };

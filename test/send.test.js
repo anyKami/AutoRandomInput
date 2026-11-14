@@ -270,3 +270,107 @@ test('chat loading removes tracked old ARI wrappers and saves the migrated metad
     await h.ctx.eventSource.emit('chat');
     assert.equal(h.saved.length, 1);
 });
+
+test('legacy sends do not create or persist narrative configuration', async () => {
+    const h = host();
+    h.ctx.chatMetadata = {};
+    let writes = 0;
+    h.ctx.saveMetadataDebounced = () => { writes++; };
+    await h.install();
+    await h.before();
+    await h.commit();
+    assert.deepEqual(h.ctx.chatMetadata, {});
+    assert.equal(writes, 0);
+    assert.equal(h.saved.length, 1);
+});
+
+test('narrative preparation keeps one immutable roll through retries and restores its original block on regeneration', async () => {
+    const h = host();
+    const { NARRATIVE_KEY } = await import('../narrative.js');
+    const group = activeGroup(h.settings);
+    group.rules = [createRule('线索', { diceSides: 2, commands: ['原命令', '另一命令'] })];
+    h.ctx.chatMetadata = { [NARRATIVE_KEY]: { enabled: true, longGroupId: group.id } };
+    await h.install();
+    const originalRandom = Math.random;
+    try {
+        Math.random = () => 0;
+        await h.before();
+        const prepared = h.input.value;
+        assert.match(prepared, /原命令/);
+        group.rules[0].commands[0] = '更新后的命令';
+        Math.random = () => 0.99;
+        await h.before();
+        assert.equal(h.input.value, prepared);
+        const sent = await h.commit();
+        const first = structuredClone(sent.extra[SETTINGS_KEY]);
+        await h.ctx.eventSource.emit('sent', 0);
+        assert.deepEqual(sent.extra[SETTINGS_KEY], first);
+        h.input.value = '后续操作';
+        await h.before();
+        await h.commit();
+        assert.equal(sent.mes, '用户输入');
+        h.ctx.chat.pop();
+        await h.before('regenerate');
+        assert.equal(sent.mes, prepared);
+        assert.deepEqual(sent.extra[SETTINGS_KEY].rolls, first.rolls);
+    } finally {
+        Math.random = originalRandom;
+    }
+});
+
+test('a failed chat save leaves quiet-next and topic blocking for the successful retry', async t => {
+    const h = host();
+    const { NARRATIVE_KEY } = await import('../narrative.js');
+    const group = activeGroup(h.settings);
+    group.rules = [createRule('港口细节', {
+        diceSides: 1, commands: ['雨水打湿斗篷'], commandMetadata: [{ effect: 'detail' }],
+    })];
+    const original = { enabled: true, longGroupId: group.id, quietNext: true, blockedTopics: { clue: 2 } };
+    h.ctx.chatMetadata = { [NARRATIVE_KEY]: structuredClone(original) };
+    let metadataWrites = 0;
+    h.ctx.saveMetadataDebounced = () => { metadataWrites++; };
+    await h.install();
+    const failed = t.mock.method(console, 'error', () => {});
+    const save = h.ctx.saveChat;
+    h.ctx.saveChat = async () => { throw new Error('fixture write failure'); };
+    await h.before();
+    const sent = await h.commit();
+    assert.equal(failed.mock.callCount(), 1);
+    assert.deepEqual(h.ctx.chatMetadata[NARRATIVE_KEY], original);
+    assert.equal(metadataWrites, 0);
+    const originalTurn = structuredClone(sent.extra[SETTINGS_KEY].narrative);
+    h.ctx.saveChat = save;
+    await h.ctx.eventSource.emit('sent', 0);
+    assert.deepEqual(sent.extra[SETTINGS_KEY].narrative, originalTurn);
+    assert.equal(h.ctx.chatMetadata[NARRATIVE_KEY].quietNext, false);
+    assert.deepEqual(h.ctx.chatMetadata[NARRATIVE_KEY].blockedTopics, { clue: 1 });
+    assert.equal(metadataWrites, 1);
+    await h.ctx.eventSource.emit('sent', 0);
+    assert.equal(metadataWrites, 1);
+});
+
+test('continuing a saved narrative reply restores the snapshot without consuming a new user turn', async t => {
+    const h = host();
+    const { NARRATIVE_KEY } = await import('../narrative.js');
+    const group = activeGroup(h.settings);
+    group.rules = [createRule('港口细节', { diceSides: 2, commands: ['雨水打湿斗篷', '茶杯泛起白雾'] })];
+    h.ctx.chatMetadata = { [NARRATIVE_KEY]: { enabled: true, longGroupId: group.id, blockedTopics: { clue: 2 } } };
+    await h.install();
+    await h.before();
+    const sent = await h.commit();
+    h.ctx.chat.push({ mes: '他来到港口。', extra: {}, swipe_id: 0 });
+    const record = sent.extra[SETTINGS_KEY];
+    const block = record.block;
+    const snapshot = structuredClone(record.narrative);
+    const rolls = structuredClone(record.rolls);
+    sent.mes = sent.mes.replace(block, '');
+    record.block = '';
+    const random = t.mock.method(Math, 'random', () => { throw new Error('continuation must not roll'); });
+    await h.before('continue');
+    await h.before('continue');
+    assert.equal(random.mock.callCount(), 0);
+    assert.equal(sent.mes.split(block).length, 2);
+    assert.deepEqual(record.narrative, snapshot);
+    assert.deepEqual(record.rolls, rolls);
+    assert.equal(h.ctx.chatMetadata[NARRATIVE_KEY].blockedTopics.clue, 1);
+});

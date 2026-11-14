@@ -5,6 +5,7 @@ import { importConfigBundle } from './config-transfer.js';
 import { mvuApi } from './mvu-skills.js';
 import { normalizeOracleSettings, oracleMessages, parseOracleReply, validateGeneratedConfig } from './oracle-config.js';
 import { selectRandomGroup } from './oracle-auto-state.js';
+import { foldNarrative, narrativeConfig, summarizeThreads } from './narrative.js';
 
 export function oracleCapabilities(api) {
     const missing = ['run', 'context.buildCardSection', 'context.buildTranscript', 'context.buildWorldInfo']
@@ -127,7 +128,12 @@ export function createOracleService(getContext, skillService, host = globalThis,
             }, { once: true }));
             const work = async () => {
                 const context = await collectOracleContext(api, source, options, host); check();
-                const messages = oracleMessages(target, options, requirements, context.blocks, { automatic, ...automaticOptions });
+                const narrative = narrativeConfig(ctx), threads = foldNarrative(source.chat).threads.filter(t => t.status === 'active').slice(0, 3);
+                if (narrative.enabled) {
+                    const summary = summarizeThreads(threads);
+                    context.blocks.push(`=== 已确认活跃剧情线摘要（仅供参考） ===\n${summary || '无'}\n=== 本聊天偏好（软要求） ===\n${narrative.preferences}\n主题偏好（prefer 表示偏好，reduce 表示减少）：${JSON.stringify(narrative.topicPreferences)}`);
+                }
+                const messages = oracleMessages(target, options, requirements, context.blocks, { automatic, ...automaticOptions, narrative: narrative.enabled });
                 const raw = await api.run(messages, { signal: ctl.signal, maxTokens: options.maxTokens,
                     onDelta: full => {
                         // Progress only needs the active chat; check() validates its contents after the stream.
@@ -136,7 +142,17 @@ export function createOracleService(getContext, skillService, host = globalThis,
                 });
                 check();
                 draft = { id, scope, target, options, notes: context.notes, messages, raw: String(raw ?? ''), applied: false };
-                try { draft.value = parseOracleReply(raw); validateGeneratedConfig(draft.value, target, options); }
+                try {
+                    draft.value = parseOracleReply(raw);
+                    const parsed = validateGeneratedConfig(draft.value, target, options);
+                    if (narrative.enabled) for (const group of parsed.randomGroups) for (const rule of group.rules) {
+                        for (const meta of [...(rule.commandMetadata ?? []), ...rule.ranges.map(row => row.metadata)].filter(Boolean)) {
+                            if (automatic && meta.persistent) throw new Error('自动生成不能创建常驻指令。');
+                            if (meta.threadId && !threads.some(thread => thread.id === meta.threadId)) throw new Error('神谕关联了不存在或未活跃的剧情线。');
+                            if (meta.conditions?.some(condition => condition?.type === 'thread' && !threads.some(thread => thread.id === condition.threadId))) throw new Error('神谕条件关联了不存在或未活跃的剧情线。');
+                        }
+                    }
+                }
                 catch (error) { draft.error = error.message; }
                 return draft;
             };
@@ -153,6 +169,26 @@ export function createOracleService(getContext, skillService, host = globalThis,
             const random = structuredClone(ctx.extensionSettings[SETTINGS_KEY]);
             const library = structuredClone(ctx.extensionSettings[SKILL_GROUPS_KEY]);
             const added = importConfigBundle(bundle, random, library);
+            // Generated IDs refer to this chat's active threads, unlike portable
+            // files. Validate again at apply time, then retain those local links.
+            if (narrativeConfig(ctx).enabled) {
+                const active = foldNarrative(ctx.chat).threads.filter(thread => thread.status === 'active');
+                bundle.randomGroups.forEach((group, groupIndex) => group.rules.forEach((rule, ruleIndex) => {
+                    const destination = added.randomGroups[groupIndex].rules[ruleIndex];
+                    const restore = (source, target) => {
+                        if (!source || !target) return;
+                        const ids = [source.threadId, ...(source.conditions ?? []).filter(condition => condition?.type === 'thread').map(condition => condition.threadId)].filter(Boolean);
+                        if (ids.some(id => !active.some(thread => thread.id === id))) throw new Error('关联的剧情线已不再活跃，请重新生成。');
+                        if (source.threadId) target.threadId = source.threadId;
+                        source.conditions?.forEach((condition, index) => {
+                            if (condition?.type === 'thread' && condition.threadId && target.conditions?.[index]) target.conditions[index].threadId = condition.threadId;
+                        });
+                        if (ids.length && !source.needsBinding) delete target.needsBinding;
+                    };
+                    rule.commandMetadata?.forEach((meta, i) => restore(meta, destination.commandMetadata[i]));
+                    rule.ranges.forEach((row, i) => { if (row.metadata) restore(row.metadata, destination.ranges[i].metadata); });
+                }));
+            }
             let sheet;
             if (!saveOnly) {
                 if (added.randomGroups.length) {

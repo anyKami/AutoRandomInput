@@ -271,3 +271,58 @@ test('missing context or missing dependency prevents spending a model request', 
     await assert.rejects(h.service.generate('both', { includeCard: false, includeTranscript: false, includeMvu: false, worldInfo: 'off' }), /资料/);
     h.host.StoryOracleAPI = undefined; await assert.rejects(h.service.generate('both', {}), /神谕/); assert.equal(calls, 0);
 });
+
+test('manual oracle preserves live thread conditions after applying its portable draft and refuses closed bindings', async () => {
+    const { NARRATIVE_KEY, foldNarrative } = await import('../narrative.js');
+    for (const withTopLevel of [false, true]) {
+        const generated = config();
+        generated.skillGroups = [];
+        const metadata = { ...(withTopLevel ? { threadId: 'thread' } : {}),
+            conditions: [{ type: 'thread', threadId: 'thread', status: 'active' }] };
+        generated.randomGroups[0].rules[0].ranges[0].metadata = metadata;
+        const h = fixture(async () => JSON.stringify(generated));
+        h.ctx.chatMetadata[NARRATIVE_KEY] = { enabled: true, threadsEnabled: true };
+        const baseRevision = foldNarrative(h.ctx.chat).revision;
+        h.ctx.chat.push({ is_user: true, mes: '查看蓝签', extra: { [SETTINGS_KEY]: { narrative: {
+            turnId: 'turn', newThreadId: 'thread', baseRevision, candidates: [],
+        } } } });
+        const entry = { report: { version: 1, turnId: 'turn', baseRevision, uses: [], updates: [],
+            newThread: { title: '蓝签来历', cause: '发现蓝签', question: '谁留下的？', evidence: '他发现一枚蓝签。' } } };
+        h.ctx.chat.push({ mes: '他发现一枚蓝签。', swipe_id: 0, extra: { [NARRATIVE_KEY]: { uid: 'reply', swipes: { 0: entry } } } });
+        const draft = await h.service.generate('random', { randomDice: 100, ruleCount: 1 });
+        assert.equal(draft.error, undefined);
+        const baseline = foldNarrative(h.ctx.chat).revision;
+        entry.actions = [{ type: 'complete', threadId: 'thread', baseRevision: baseline }];
+        assert.throws(() => h.service.apply(draft.value), /剧情线|绑定/);
+        entry.actions = [];
+        const saved = h.service.apply(draft.value).randomGroups[0].rules[0].ranges[0].metadata;
+        assert.deepEqual(saved.conditions, metadata.conditions);
+        assert.equal(saved.threadId, metadata.threadId);
+        assert.equal(saved.needsBinding, undefined);
+    }
+});
+
+test('oracle accepts executable condition objects and rejects text or invalid operands before applying', () => {
+    const data = config();
+    data.skillGroups = [];
+    const row = data.randomGroups[0].rules[0].ranges[0];
+    const valid = [
+        { type: 'stat', path: 'stat_data.场景.回合', op: 'gte', value: 0 },
+        { type: 'label', value: '码头' },
+        { type: 'thread', threadId: 'thread', status: 'active' },
+    ];
+    row.metadata = { conditions: valid };
+    assert.deepEqual(validateGeneratedConfig(data, 'random').randomGroups[0].rules[0].ranges[0].metadata.conditions, valid);
+    for (const condition of [
+        '玩家还在码头', { type: 'script' }, { ...valid[0], op: 'execute' },
+        { ...valid[0], value: '0' }, { ...valid[0], path: '场景.回合' },
+    ]) {
+        row.metadata.conditions = [condition];
+        assert.throws(() => validateGeneratedConfig(data, 'random'), /条件/);
+    }
+    row.metadata = { needsBinding: true, conditions: [{ type: 'thread', status: 'active' }] };
+    assert.equal(validateGeneratedConfig(data, 'random').randomGroups[0].rules[0].ranges[0].metadata.needsBinding, true);
+    const instructions = oracleMessages('random', {}, '', [], { narrative: true })[0].content;
+    assert.match(instructions, /不要将条件写成自然语言字符串/);
+    assert.match(instructions, /自然语言适用性和下一轮行动写在指令正文/);
+});

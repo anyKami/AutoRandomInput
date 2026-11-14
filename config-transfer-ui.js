@@ -3,6 +3,7 @@ import { effectiveRandomSettings } from './oracle-auto-state.js';
 import { SKILL_GROUPS_KEY } from './skill-groups.js';
 import { SKILL_SETTINGS_KEY } from './skills.js';
 import { importConfigBundle, parseConfigFile, previewConfigImport, serializeConfigFile } from './config-transfer.js';
+import { narrativeConfig } from './narrative.js';
 
 function downloadFile(text, name) {
     const url = URL.createObjectURL(new Blob([text], { type: 'application/json;charset=utf-8' }));
@@ -74,6 +75,7 @@ export function mountConfigTransferUI(dialog, getContext, onImport) {
         resetImport(); renderLibrary(); status();
         $('.ari-tabs').hidden = true;
         $('#ari-random-panel').hidden = true;
+        $('#ari-narrative-panel').hidden = true;
         $('#ari-skills-panel').hidden = true;
         $('#ari-settings-panel').hidden = true;
         panel.hidden = false;
@@ -85,7 +87,7 @@ export function mountConfigTransferUI(dialog, getContext, onImport) {
         resetImport();
         panel.hidden = true;
         $('.ari-tabs').hidden = false;
-        for (const name of ['random', 'skills', 'settings']) {
+        for (const name of ['random', 'narrative', 'skills', 'settings']) {
             $(`#ari-${name}-panel`).hidden = $(`#ari-tab-${name}`).getAttribute('aria-selected') !== 'true';
         }
         $('#ari-transfer-toggle').setAttribute('aria-expanded', 'false');
@@ -112,7 +114,13 @@ export function mountConfigTransferUI(dialog, getContext, onImport) {
         } else {
             const group = activeGroup(effectiveRandomSettings(ctx));
             if (group.id !== sourceIdentity) throw new Error('当前配置已切换，请重新打开导入 / 导出面板。');
-            text = serializeConfigFile([{ ...group, name }]);
+            const config = narrativeConfig(ctx);
+            if (config.enabled) {
+                const groups = [config.longGroupId, config.sceneGroupId].filter((id, i, ids) => id && ids.indexOf(id) === i)
+                    .map(id => random().groups.find(item => item.id === id)).filter(Boolean);
+                if (!groups.length) throw new Error('当前剧情没有可导出的绑定组。');
+                text = serializeConfigFile(groups);
+            } else text = serializeConfigFile([{ ...group, name }]);
         }
         downloadFile(text, name);
         status('已生成当前配置文件。');

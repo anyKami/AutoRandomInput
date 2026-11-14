@@ -316,3 +316,56 @@ test('regeneration reuses the protocol left inside recall after a regex edits it
     assert.equal(message.mes, original);
     assert.equal(message.mes.split('[随机指令工作台 · 技能检定协议 v2]').length, 2);
 });
+
+test('a parsed narrative report cannot attach to a different swipe before MVU write', async () => {
+    const h = fixture();
+    const { NARRATIVE_KEY, foldNarrative } = await import('../narrative.js');
+    const turn = { turnId: 'turn', newThreadId: 'thread', baseRevision: foldNarrative([]).revision, candidates: [] };
+    h.ctx.chat.push({ is_user: true, mes: '查看蓝签', extra: { [SETTINGS_KEY]: { narrative: turn } } });
+    const reply = { mes: '他发现一枚蓝签。', swipe_id: 0, extra: {} };
+    h.ctx.chat.push(reply);
+    const report = {
+        version: 1, turnId: turn.turnId, baseRevision: turn.baseRevision, uses: [], updates: [],
+        newThread: { title: '蓝签来历', cause: '发现蓝签', question: '谁留下的？', evidence: '他发现一枚蓝签。' },
+    };
+    const variables = { stat_data: { 场景: { 回合: 1 } }, schema: {} };
+    const commands = [{ op: 'replace', path: '/随机指令工作台/剧情回报', value: report }];
+    await h.ctx.eventSource.emit('mag_command_parsed', variables, commands, reply.mes);
+    assert.equal(commands.length, 0);
+    reply.swipe_id = 1;
+    await h.ctx.eventSource.emit('mag_before_message_update', { variables });
+    assert.deepEqual(foldNarrative(h.ctx.chat).threads, []);
+    assert.equal(reply.extra[NARRATIVE_KEY]?.swipes?.[1], undefined);
+    assert.equal(variables.stat_data.随机指令工作台?.剧情回报, undefined);
+});
+
+test('reparsed narrative edits clear stale reports but preserve actions on the same swipe', async () => {
+    const h = fixture();
+    const { NARRATIVE_KEY, foldNarrative } = await import('../narrative.js');
+    const turn = { turnId: 'edit-turn', newThreadId: 'thread', baseRevision: foldNarrative([]).revision, candidates: [] };
+    h.ctx.chat.push({ is_user: true, mes: '查看蓝签', extra: { [SETTINGS_KEY]: { narrative: turn } } });
+    const report = { version: 1, turnId: turn.turnId, baseRevision: turn.baseRevision, uses: [], updates: [],
+        newThread: { title: '蓝签来历', cause: '发现蓝签', question: '谁留下的？', evidence: '他发现一枚蓝签。' } };
+    const actions = [{ type: 'pause', threadId: 'thread' }];
+    const data = { uid: 'edited-reply', swipes: { 0: { report, actions }, 1: { report } } };
+    const message = { mes: '他发现一枚蓝签。', swipe_id: 0, extra: { [NARRATIVE_KEY]: data } };
+    h.ctx.chat.push(message);
+    const parse = async commands => {
+        const variables = { stat_data: { 场景: { 回合: 1 } }, schema: {} };
+        await h.ctx.eventSource.emit('mag_command_parsed', variables, commands, message.mes);
+        return variables;
+    };
+    const absent = await parse([]);
+    message.swipe_id = 1;
+    await h.ctx.eventSource.emit('mag_before_message_update', { variables: absent });
+    assert.deepEqual(data.swipes[1].report, report);
+    message.swipe_id = 0;
+    await h.ctx.eventSource.emit('mag_before_message_update', { variables: await parse([]) });
+    assert.deepEqual(data.swipes[0], { actions });
+    data.swipes[0].report = report;
+    const wrongTurn = await parse([{ op: 'replace', path: '/随机指令工作台/剧情回报',
+        value: { ...report, turnId: 'old-turn' } }]);
+    await h.ctx.eventSource.emit('mag_before_message_update', { variables: wrongTurn });
+    assert.deepEqual(data.swipes[0], { actions });
+    assert.equal(wrongTurn.stat_data.随机指令工作台?.剧情回报, undefined);
+});
