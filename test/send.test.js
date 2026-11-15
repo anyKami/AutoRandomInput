@@ -18,9 +18,13 @@ function host() {
     const saved = [];
     const updated = [];
     const rendered = new Set();
+    const prompts = new Map();
     const ctx = {
         chat: [], extensionSettings: { [SETTINGS_KEY]: settings },
-        eventTypes: { GENERATION_AFTER_COMMANDS: 'before', MESSAGE_SENT: 'sent', CHAT_CHANGED: 'chat', MESSAGE_UPDATED: 'updated' },
+        eventTypes: { GENERATION_AFTER_COMMANDS: 'before', MESSAGE_SENT: 'sent', CHAT_CHANGED: 'chat', MESSAGE_UPDATED: 'updated',
+            GENERATION_ENDED: 'end', GENERATION_STOPPED: 'stop', GROUP_WRAPPER_STARTED: 'group-start', GROUP_WRAPPER_FINISHED: 'group-end',
+            GROUP_MEMBER_DRAFTED: 'group-member' },
+        setExtensionPrompt(key, value, ...options) { prompts.set(key, { value, options }); },
         eventSource: {
             on(type, fn) { const list = listeners.get(type) ?? []; list.push(fn); listeners.set(type, list); },
             makeFirst(type, fn) { const list = listeners.get(type) ?? []; list.unshift(fn); listeners.set(type, list); },
@@ -34,7 +38,7 @@ function host() {
         },
         async saveChat() { saved.push(JSON.stringify(this.chat)); },
     };
-    return { ctx, input, settings, saved, updated, rendered,
+    return { ctx, input, settings, saved, updated, rendered, prompts,
         install: () => installSendHooks(() => ctx, () => {}, () => input, id => rendered.has(id)),
         before: (type = 'normal', params = {}, dryRun = false) => ctx.eventSource.emit('before', type, params, dryRun),
         async commit(text = input.value) {
@@ -57,6 +61,118 @@ test('a chat automatic group reaches the prepared input and saved roll without c
     const message = await h.commit();
     assert.equal(message.extra[SETTINGS_KEY].groupId, group.id);
     assert.equal(h.settings.activeGroupId, manualId);
+});
+
+test('narrative sends only candidate text to chat and reuses its system prompt across grouped replies and replacement generations', async t => {
+    const h = host();
+    const { NARRATIVE_KEY } = await import('../narrative.js');
+    const group = activeGroup(h.settings);
+    group.rules = [createRule('线索', { diceSides: 1, commands: ['港口浮起一枚蓝签'] })];
+    h.ctx.groupId = 'test-group';
+    h.ctx.chat.push({ mes: '开场白', extra: {} });
+    h.ctx.chatMetadata = { [NARRATIVE_KEY]: { enabled: true, threadsEnabled: true, longGroupId: group.id } };
+    const original = Object.getOwnPropertyDescriptor(globalThis, 'Mvu');
+    Object.defineProperty(globalThis, 'Mvu', { configurable: true, value: { getMvuData: () => ({ stat_data: {} }) } });
+    t.after(() => original ? Object.defineProperty(globalThis, 'Mvu', original) : delete globalThis.Mvu);
+    await h.install();
+    const emit = (name, ...args) => h.ctx.eventSource.emit(name, ...args);
+    const prompt = () => h.prompts.get('auto_random_input_narrative');
+    await h.before();
+    await emit('group-start', { selected_group: h.ctx.groupId, type: 'normal' });
+    await emit('group-member', 1);
+    await h.before();
+    assert.match(h.input.value, /港口浮起一枚蓝签/);
+    const sent = await h.commit();
+    const { narrative } = sent.extra[SETTINGS_KEY];
+    assert.ok(narrative.candidates.length);
+    for (const id of [...narrative.candidates, narrative.turnId, narrative.newThreadId]) {
+        assert.ok(!sent.mes.includes(id));
+        assert.ok(prompt().value.includes(id));
+    }
+    assert.doesNotMatch(sent.mes, /剧情记录协议/);
+    const snapshot = structuredClone(prompt());
+    assert.deepEqual(snapshot.options, [1, 0, false, 0]);
+    h.ctx.chat.push({ mes: '第一位回应', extra: {} });
+    await emit('end');
+    await emit('group-member', 2);
+    await h.before();
+    assert.deepEqual(prompt(), snapshot);
+    await emit('group-end', { selected_group: h.ctx.groupId, type: 'normal' });
+    assert.equal(prompt().value, '');
+    for (const type of ['swipe', 'continue', 'regenerate']) {
+        await h.before(type);
+        assert.deepEqual(prompt(), snapshot);
+        await emit('end');
+        assert.equal(prompt().value, '');
+    }
+    // The host deletes the current batch and calls its wrapper directly with type "normal".
+    h.ctx.chat.pop();
+    await emit('group-start', { selected_group: h.ctx.groupId, type: 'normal' });
+    await emit('group-member', 1);
+    await h.before();
+    assert.deepEqual(prompt(), snapshot);
+    await emit('group-end', { selected_group: h.ctx.groupId, type: 'normal' });
+    await h.before('swipe');
+    await emit('stop');
+    assert.equal(prompt().value, '');
+    await h.before('swipe');
+    await h.before('normal', {}, true);
+    assert.equal(prompt().value, '');
+    await h.before('swipe');
+    await h.before('normal', { automatic_trigger: true });
+    assert.equal(prompt().value, '');
+    await h.before('swipe');
+    h.ctx.chat = [];
+    await emit('chat');
+    assert.equal(prompt().value, '');
+});
+
+for (const withCandidate of [false, true]) test(withCandidate
+    ? 'a rewritten draft does not reintroduce its removed candidates through the hidden protocol'
+    : 'a turn without candidate commands still injects and accepts a narrative report', async t => {
+    const h = host();
+    const { NARRATIVE_KEY, foldNarrative } = await import('../narrative.js');
+    const group = activeGroup(h.settings);
+    group.rules = [createRule('线索', { diceSides: 1, commands: ['港口浮起一枚蓝签'] })];
+    h.ctx.chat.push({ mes: '开场白', extra: {} });
+    h.ctx.chatMetadata = { [NARRATIVE_KEY]: { enabled: true, threadsEnabled: true, longGroupId: withCandidate ? group.id : null } };
+    const original = Object.getOwnPropertyDescriptor(globalThis, 'Mvu');
+    Object.defineProperty(globalThis, 'Mvu', { configurable: true, value: { getMvuData: () => ({ stat_data: {} }) } });
+    t.after(() => original ? Object.defineProperty(globalThis, 'Mvu', original) : delete globalThis.Mvu);
+    await h.install();
+    const prompt = () => h.prompts.get('auto_random_input_narrative').value;
+    await h.before();
+    assert.match(prompt(), /剧情记录协议/);
+    const sent = await h.commit('用户输入');
+    const { narrative } = sent.extra[SETTINGS_KEY];
+    assert.equal(sent.mes, '用户输入');
+    if (withCandidate) {
+        assert.equal(narrative.candidates.length, 1);
+        assert.equal(prompt(), '');
+        await h.before('swipe');
+        assert.equal(prompt(), '');
+        return;
+    }
+    assert.deepEqual(narrative.candidates, []);
+    assert.match(prompt(), /"uses":\[\]/);
+    const report = {
+        version: 1, turnId: narrative.turnId, baseRevision: narrative.baseRevision, uses: [], updates: [],
+        newThread: { title: '蓝签来源', cause: '发现蓝签', question: '蓝签是谁遗留的？', evidence: '他捡起蓝签。' },
+    };
+    h.ctx.chat.push({ mes: '他捡起蓝签。', swipe_id: 0, extra: { [NARRATIVE_KEY]: { uid: 'reply', swipes: { 0: { report } } } } });
+    assert.equal(foldNarrative(h.ctx.chat).threads[0]?.title, '蓝签来源');
+});
+
+test('legacy saved narrative blocks are restored for a swipe without also registering an extension prompt', async () => {
+    const h = host();
+    const text = '\n\n> **本轮指令**\n> [候选 old-id] 历史指令\n> 剧情记录协议 v1';
+    const message = user('用户输入');
+    message.extra[SETTINGS_KEY] = { block: '', display: '', narrative: { injected: true, fullBlock: text, fullDisplay: text, prompt: text } };
+    h.ctx.chat.push(message, { mes: '历史回复' });
+    await h.install();
+    await h.before('swipe');
+    assert.equal(message.mes, '用户输入' + text);
+    assert.equal(h.prompts.get('auto_random_input_narrative').value, '');
 });
 
 test('d100 reaches recall once, reuses its range snapshot on retries, and saves the same result', async t => {

@@ -5,7 +5,9 @@ import { NARRATIVE_KEY, foldNarrative, narrativeConfig, prepareNarrativeTurn, re
 
 export async function installSendHooks(getContext, onChange, getInput = () => document.getElementById('send_textarea'),
     isRendered = id => !!document.querySelector(`#chat .mes[mesid="${id}"]`), skills = null) {
-    let pending;
+    let pending, groupWrapper = false;
+    const setNarrativePrompt = (current, record) => current.setExtensionPrompt?.(
+        'auto_random_input_narrative', record?.narrative?.promptInjectionVersion === 1 && !record.narrative.promptSuppressed ? record.narrative.prompt : '', 1, 0, false, 0);
     let countedMessages = new WeakSet();
     const ctx = getContext();
     const discardDraft = () => {
@@ -54,12 +56,13 @@ export async function installSendHooks(getContext, onChange, getInput = () => do
         if (ids.length) await current.saveChat();
     };
     const beforeGeneration = async (type, params = {}, dryRun = false) => {
-        if (dryRun || params?.automatic_trigger) return;
+        if (dryRun || params?.automatic_trigger) { setNarrativePrompt(getContext(), null); return; }
         if (['regenerate', 'swipe', 'continue'].includes(type)) {
             const current = getContext();
             const id = current.chat.findLastIndex(message => message?.is_user && !message.is_system);
             const message = current.chat[id], record = message?.extra?.[SETTINGS_KEY];
             const ids = [];
+            setNarrativePrompt(current, record);
             if (record?.narrative?.injected && !record.block && record.narrative.fullBlock && !message.mes.includes(record.narrative.fullBlock)) {
                 record.block = record.narrative.fullBlock; record.display = record.narrative.fullDisplay;
                 message.mes += record.block; delete message.extra.token_count; ids.push(id);
@@ -67,18 +70,27 @@ export async function installSendHooks(getContext, onChange, getInput = () => do
             if (ids.length) await refresh(getContext(), ids);
             return;
         }
-        if (![undefined, 'normal'].includes(type)) return;
+        if (![undefined, 'normal'].includes(type)) { setNarrativePrompt(getContext(), null); return; }
         const current = getContext();
         const settings = current.extensionSettings[SETTINGS_KEY];
+        setNarrativePrompt(current, null);
         const input = getInput();
-        if ((!settings.enabled && !skills?.enabled() && !narrativeConfig(current).enabled) || !input?.value.trim()) return;
+        if (!input?.value.trim()) {
+            if (groupWrapper) {
+                const message = current.chat.findLast(item => item?.is_user && !item.is_system);
+                setNarrativePrompt(current, message?.extra?.[SETTINGS_KEY]);
+            }
+            return;
+        }
+        if (!settings.enabled && !skills?.enabled() && !narrativeConfig(current).enabled) return;
         // A cancelled send or the group's inner generation may reuse this same draft.
         if (pending?.chat === current.chat && pending.messageId === current.chat.length &&
             (pending.record.narrative || pending.skillRevision === skills?.revision?.()) &&
-            input.value.includes(pending.record.block || pending.text)) return;
+            input.value.includes(pending.record.block || pending.text)) { setNarrativePrompt(current, pending.record); return; }
         discardDraft();
         if (!input.value.trim()) return;
         const record = makeRecord(current, current.chat.length);
+        setNarrativePrompt(current, record);
         pending = { chat: current.chat, messageId: current.chat.length, skillRevision: skills?.revision?.(), record, text: input.value + record.block };
         input.value = pending.text;
         input.dispatchEvent(new Event('input', { bubbles: true }));
@@ -91,6 +103,12 @@ export async function installSendHooks(getContext, onChange, getInput = () => do
         if (prepared) pending = null;
         const outcome = processMessage(current.chat, messageId, effectiveRandomSettings(current), Math.random, prepared,
             (skills?.enabled() || narrativeConfig(current).enabled) ? () => makeRecord(current, messageId) : null);
+        if (outcome?.record.narrative && prepared?.block && !outcome.record.block) {
+            // An input processor removed or rewrote the prepared block; do not
+            // reintroduce its candidate instructions through the hidden prompt.
+            outcome.record.narrative.promptSuppressed = true;
+        }
+        if (outcome?.record.narrative) setNarrativePrompt(current, outcome.record);
         if (outcome?.record.narrative) outcome.record.narrative.injected = !!outcome.record.block;
         if (outcome) await refresh(current, outcome.changedIds, messageId);
         if (message?.is_user && !message.is_system && !countedMessages.has(message)) {
@@ -111,6 +129,8 @@ export async function installSendHooks(getContext, onChange, getInput = () => do
     const onChatChanged = async () => {
         discardDraft();
         const current = getContext();
+        setNarrativePrompt(current, null);
+        groupWrapper = false;
         countedMessages = new WeakSet(current.chat);
         await refresh(current, removeLegacyMarkers(current.chat));
         skills?.reset();
@@ -123,6 +143,13 @@ export async function installSendHooks(getContext, onChange, getInput = () => do
     if (ctx.eventTypes.GENERATION_AFTER_COMMANDS) first(ctx.eventTypes.GENERATION_AFTER_COMMANDS, beforeGeneration);
     first(ctx.eventTypes.MESSAGE_SENT, onMessageSent);
     ctx.eventSource.on(ctx.eventTypes.CHAT_CHANGED, safely(onChatChanged));
+    for (const name of ['GENERATION_ENDED', 'GENERATION_STOPPED']) {
+        if (ctx.eventTypes[name]) ctx.eventSource.on(ctx.eventTypes[name], () => setNarrativePrompt(getContext(), null));
+    }
+    if (ctx.eventTypes.GROUP_WRAPPER_STARTED) ctx.eventSource.on(ctx.eventTypes.GROUP_WRAPPER_STARTED, () => { groupWrapper = true; });
+    if (ctx.eventTypes.GROUP_WRAPPER_FINISHED) ctx.eventSource.on(ctx.eventTypes.GROUP_WRAPPER_FINISHED, () => {
+        groupWrapper = false; setNarrativePrompt(getContext(), null);
+    });
     for (const event of ['MESSAGE_SWIPED', 'MESSAGE_DELETED', 'MESSAGE_EDITED']) {
         if (ctx.eventTypes[event]) ctx.eventSource.on(ctx.eventTypes[event], safely(() => {
             // Narrative sends use the already prepared immutable branch snapshot.

@@ -5,7 +5,7 @@
         <path d="M20 2 38 13v18L20 42 2 31V13L20 2Z M2 13l18 10 18-10 M20 23v19 M20 2v21" />
         <circle cx="20" cy="23" r="3" />
       </svg>
-      <div><span class="ari-eyebrow">AUTO RANDOM INPUT</span><h2 id="ari-title">随机指令工作台 3.2.1</h2></div>
+      <div><span class="ari-eyebrow">AUTO RANDOM INPUT</span><h2 id="ari-title">随机指令工作台 3.2.2</h2></div>
     </div>
     <div class="ari-header-actions">
       <button id="ari-transfer-toggle" type="button" aria-expanded="false" aria-controls="ari-transfer-panel">导入 / 导出</button>
@@ -171,6 +171,7 @@
         <label class="ari-oracle-field"><span>指令映射</span><select id="ari-auto-oracle-mapping"><option value="first">前 N 点有指令，后续留空</option><option value="even">均匀覆盖所有点数</option></select></label>
         <label class="ari-oracle-field"><span>自定义提示词（可留空）</span><textarea id="ari-auto-oracle-prompt" rows="4" maxlength="6000" placeholder="留空时根据近期剧情和世界书设定，为接下来几轮生成随机指令。"></textarea></label>
         <p class="ari-skill-note">复用下方的资料来源、字符上限和超时设置；只更新专用自动组。已有手动组保留，可随时切换。</p>
+        <button id="ari-auto-oracle-regenerate" type="button">立即重新生成</button>
         <div id="ari-auto-oracle-start-actions" class="ari-transfer-actions" hidden><button class="ari-primary" type="submit">开始自动生成</button><button id="ari-auto-oracle-setup-cancel" type="button">取消设置</button></div>
       </form>
       <p id="ari-auto-oracle-master-note" class="ari-skill-note">随机指令总开关关闭：仍会生成配置，发送时不会追加指令。如需使用，请在随机指令页开启总开关。</p>

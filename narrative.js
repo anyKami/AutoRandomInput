@@ -119,16 +119,17 @@ export function prepareNarrativeTurn(settings, config, state, random = Math.rand
     }
     persistent.forEach(item => { item.reason = 'persistent'; });
     const chosen = [...persistent, ...selected];
-    const instructions = chosen.map(item => `[候选 ${item.candidateId} | ${item.metadata.effect} | 关联线 ${item.metadata.threadId ?? '无'}] ${item.command}`).join('\n\n');
+    const instructions = chosen.map(item => item.command).join('\n\n');
+    const candidateMapping = chosen.map(item => `[候选 ${item.candidateId} | ${item.metadata.effect} | 关联线 ${item.metadata.threadId ?? '无'}] ${item.command}`).join('\n\n');
     const threadSummary = summarizeThreads(state.threads);
     const example = { version: 1, turnId, baseRevision: state.revision,
         uses: chosen.map(item => ({ candidateId: item.candidateId, status: 'ignored' })), updates: [], newThread: null };
     const patchExample = JSON.stringify([{ op: 'add', path: '/随机指令工作台/剧情回报', value: example }]);
-    const request = config.threadsEnabled && state.ready ? `\n\n剧情记录协议 v1：当前活跃线（AI 根据正文记录）：\n${threadSummary || '无'}\n本轮预分配的新线 ID：${newThreadId}。沿用角色卡原有 MVU 更新格式，在正文之后通过 MVU 写入 stat_data.随机指令工作台.剧情回报，值为一个 JSON 对象；不要仅在普通代码块展示。每条 AI 回复都必须独立写入当前 turnId 和 baseRevision 的完整剧情回报；群聊中后续角色也必须单独回报，不能用其他角色的回报代替。没有剧情变化时，uses 仍逐项填写，updates 为 []，newThread 为 null。如果角色卡使用 JSON Patch，合法的完整命令数组示例（其中已包含本轮真实 ID）为：${patchExample}。本插件的剧情回报操作必须有 op、path、value 三个键，op 的值使用 add 或 replace，绝不能把 replace 或 add 当作键；角色卡其他变量操作沿用原协议。如果角色卡使用 XML 包裹 JSON Patch，必须完整输出成对的 <UpdateVariable><JSONPatch>合法 JSON 数组</JSONPatch></UpdateVariable>，结束标签必须有斜杠；检查数组与对象括号完整闭合，不能多出括号。把本操作加入角色卡原有的 MVU 更新块，继续输出本轮其他应更新的变量，不能省略或覆盖它们。如果角色卡使用 _.set，继续沿用卡的 _.set 原语法，路径为“随机指令工作台.剧情回报”，值使用上述命令中的 value 对象，不要强制改成 JSON Patch。uses 中把实际采用的候选 status 改为 adopted；updates 项为 {"threadId":"已有活跃线ID","action":"advance|pause|complete","fact":"已经发生的事实变化","evidence":"本次正文原文"}；如需新建一线，将 newThread 替换为 {"title":"标题","cause":"已发生起因","question":"未解决问题","evidence":"本次正文原文"}，系统自动使用上面的预分配 ID。证据只能逐字引用自己当前这条回复的正文，不能引用其他角色的回复；前面角色已记录的新线不要重复提议。只记录已经发生的事实，不把传闻和猜测当确定事实；至多新建一线。不得恢复用户暂停或结束的线。只输出角色卡要求的最终正文及 MVU，不输出协议解释、自检、修正草稿或重复正文。正文不要播报骰点、DC或剧情线状态，保持角色卡原有格式和 content 标签。` : '';
-    const blocks = makeBlock(instructions + request, settings.stealthMode);
+    const request = config.threadsEnabled && state.ready ? `\n\n剧情记录协议 v1：本轮候选指令及其 ID（对应用户消息中的指令）：\n${candidateMapping || '无'}\n\n当前活跃线（AI 根据正文记录）：\n${threadSummary || '无'}\n本轮预分配的新线 ID：${newThreadId}。沿用角色卡原有 MVU 更新格式，在正文之后通过 MVU 写入 stat_data.随机指令工作台.剧情回报，值为一个 JSON 对象；不要仅在普通代码块展示。每条 AI 回复都必须独立写入当前 turnId 和 baseRevision 的完整剧情回报；群聊中后续角色也必须单独回报，不能用其他角色的回报代替。没有剧情变化时，uses 仍逐项填写，updates 为 []，newThread 为 null。如果角色卡使用 JSON Patch，合法的完整命令数组示例（其中已包含本轮真实 ID）为：${patchExample}。本插件的剧情回报操作必须有 op、path、value 三个键，op 的值使用 add 或 replace，绝不能把 replace 或 add 当作键；角色卡其他变量操作沿用原协议。如果角色卡使用 XML 包裹 JSON Patch，必须完整输出成对的 <UpdateVariable><JSONPatch>合法 JSON 数组</JSONPatch></UpdateVariable>，结束标签必须有斜杠；检查数组与对象括号完整闭合，不能多出括号。把本操作加入角色卡原有的 MVU 更新块，继续输出本轮其他应更新的变量，不能省略或覆盖它们。如果角色卡使用 _.set，继续沿用卡的 _.set 原语法，路径为“随机指令工作台.剧情回报”，值使用上述命令中的 value 对象，不要强制改成 JSON Patch。uses 中把实际采用的候选 status 改为 adopted；updates 项为 {"threadId":"已有活跃线ID","action":"advance|pause|complete","fact":"已经发生的事实变化","evidence":"本次正文原文"}；如需新建一线，将 newThread 替换为 {"title":"标题","cause":"已发生起因","question":"未解决问题","evidence":"本次正文原文"}，系统自动使用上面的预分配 ID。证据只能逐字引用自己当前这条回复的正文，不能引用其他角色的回复；前面角色已记录的新线不要重复提议。只记录已经发生的事实，不把传闻和猜测当确定事实；至多新建一线。不得恢复用户暂停或结束的线。只输出角色卡要求的最终正文及 MVU，不输出协议解释、自检、修正草稿或重复正文。正文不要播报骰点、DC或剧情线状态，保持角色卡原有格式和 content 标签。` : '';
+    const blocks = makeBlock(instructions, settings.stealthMode);
     return { groupId: config.longGroupId, groupName: '剧情增强', rolls, ...blocks,
         narrative: { version: 1, turnId, newThreadId, configVersion: config.configVersion, baseRevision: state.revision,
-            sceneRevision: config.sceneRevision, candidates: chosen.map(item => item.candidateId), prompt: blocks.block,
+            sceneRevision: config.sceneRevision, candidates: chosen.map(item => item.candidateId), prompt: request.trim(), promptInjectionVersion: 1,
             quiet: config.quietNext, snapshot: structuredClone(config) } };
 }
 

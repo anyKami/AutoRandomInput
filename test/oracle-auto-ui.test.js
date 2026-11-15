@@ -41,12 +41,13 @@ function fixture({ chat = [{}] } = {}) {
         update(values) {
             calls.push(['update', values]); Object.assign(ctx.chatMetadata[AUTO_ORACLE_KEY], values); ui.refresh();
         },
+        regenerate() { calls.push(['regenerate']); },
     };
     ui = mountAutoOracleUI(dialog, () => ctx, controller);
     const fire = (id, type) => node(id).dispatchEvent(new Event(type, { cancelable: true }));
     const enable = () => { node('enabled').checked = true; fire('enabled', 'change'); };
     const accept = () => fire('confirm-ok', 'click');
-    return { node, fire, enable, accept, ctx, calls, dialog, ui };
+    return { node, fire, enable, accept, ctx, calls, controller, dialog, ui };
 }
 
 test('automatic form exposes the supported dice, mapping choices and numeric bounds', () => {
@@ -149,4 +150,21 @@ test('turning off stops automatic generation and re-enabling asks again', () => 
     h.enable();
     assert.equal(h.node('confirm').open, true);
     assert.equal(h.calls.filter(([name]) => name === 'start').length, 1);
+});
+
+test('the regenerate button uses the current form and is available only when automatic generation is active and idle', () => {
+    const h = fixture();
+    assert.equal(h.node('regenerate').hidden, true);
+    h.enable(); h.accept();
+    assert.equal(h.node('regenerate').hidden, true);
+    h.fire('form', 'submit');
+    assert.equal(h.node('regenerate').hidden, false);
+    h.controller.pending = true; h.ui.refresh();
+    assert.equal(h.node('regenerate').disabled, true);
+    h.controller.pending = false; h.ui.refresh();
+    h.node('prompt').value = '保存本次要求';
+    h.fire('regenerate', 'click');
+    assert.equal(h.calls.at(-2)[0], 'update');
+    assert.equal(h.calls.at(-2)[1].prompt, '保存本次要求');
+    assert.deepEqual(h.calls.at(-1), ['regenerate']);
 });

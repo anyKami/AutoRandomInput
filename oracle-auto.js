@@ -16,7 +16,7 @@ export function installAutoOracle(getContext, service, {
     reconcileAutoOracleState(context);
     let seen = new WeakSet(context.chat ?? []), generationType;
     let lastFloor = (context.chat?.length ?? 0) - 1;
-    let queued = false, task = null, mainBusy = false, waitTimer;
+    let queued = false, queuedManual = false, task = null, mainBusy = false, waitTimer;
     const sameChat = ctx => ctx.chat === getContext().chat && ctx.chatMetadata === getContext().chatMetadata
         && chatKey(ctx) === chatKey(getContext());
     const state = () => autoOracleState(getContext());
@@ -36,7 +36,7 @@ export function installAutoOracle(getContext, service, {
     }
 
     function cancel(reason) {
-        queued = false;
+        queued = false; queuedManual = false;
         clearWait();
         if (!task || task.cancelled) return;
         task.cancelled = true;
@@ -48,11 +48,11 @@ export function installAutoOracle(getContext, service, {
         if (!queued || task || service.busy || !state().enabled || !getContext().chat?.length) return;
         if (mainIsBusy()) { waitForMain(); return; }
         clearWait();
-        queued = false;
+        const manual = queuedManual;
+        queued = false; queuedManual = false;
         const ctx = getContext(), settings = reconcileAutoOracleState(ctx);
-        // Count the next interval from this attempt, including when the API fails.
-        settings.progress = 0;
-        save(settings);
+        // Automatic attempts start a new interval, even when the API fails.
+        if (!manual) { settings.progress = 0; save(settings); }
         const narrative = narrativeConfig(ctx);
         // Establish the current scene before capturing the job's revision;
         // otherwise the first read of a newly bound path looks like an
@@ -148,7 +148,7 @@ export function installAutoOracle(getContext, service, {
         const next = state();
         next.progress = Math.min(next.interval, next.progress + 1);
         save(next);
-        if (next.progress >= next.interval) queued = true;
+        if (next.progress >= next.interval) { queued = true; queuedManual = false; }
         onChange();
         // Never make the host's message event wait for a model request.
         void pump();
@@ -190,8 +190,13 @@ export function installAutoOracle(getContext, service, {
             if (![1,2,3,4,5,6,7,8,9,10,20,100].includes(diceSides) || !Number.isSafeInteger(commandCount) || commandCount < 1 || commandCount > diceSides || !Number.isSafeInteger(ruleCount) || ruleCount < 1 || ruleCount > 10 || !['first', 'even'].includes(mapping)) throw new Error('骰子数量须为 1 到 10，指令条数须为 1 到骰子面数。');
             const next = reconcileAutoOracleState(getContext());
             Object.assign(next, { enabled: true, interval, prompt, commandCount, ruleCount, diceSides, mapping, progress: 0 });
-            save(next); seen = new WeakSet(getContext().chat); lastFloor = getContext().chat.length - 1; queued = true;
+            save(next); seen = new WeakSet(getContext().chat); lastFloor = getContext().chat.length - 1; queued = true; queuedManual = false;
             onChange(); return pump();
+        },
+        regenerate() {
+            if (!state().enabled || !getContext().chat?.length) throw new Error('请先开启当前聊天的自动生成。');
+            if (task || queued) return;
+            queued = true; queuedManual = true; onChange(); return pump();
         },
         stop() {
             const next = reconcileAutoOracleState(getContext()); next.enabled = false; save(next);
@@ -202,7 +207,7 @@ export function installAutoOracle(getContext, service, {
             if (!Number.isSafeInteger(interval) || interval < 1) throw new Error('生成间隔须为大于等于 1 的整数。');
             if (![1,2,3,4,5,6,7,8,9,10,20,100].includes(diceSides) || !Number.isSafeInteger(commandCount) || commandCount < 1 || commandCount > diceSides || !Number.isSafeInteger(ruleCount) || ruleCount < 1 || ruleCount > 10 || !['first', 'even'].includes(mapping)) throw new Error('骰子数量须为 1 到 10，指令条数须为 1 到骰子面数。');
             const next = reconcileAutoOracleState(getContext());
-            if (next.interval !== interval) { next.progress = 0; queued = false; clearWait(); }
+            if (next.interval !== interval) { next.progress = 0; queued = false; queuedManual = false; clearWait(); }
             Object.assign(next, { interval, prompt, commandCount, ruleCount, diceSides, mapping }); save(next); onChange();
         },
     };

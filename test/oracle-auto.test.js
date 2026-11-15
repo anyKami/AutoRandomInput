@@ -132,6 +132,27 @@ test('automatic defaults use recent plot and world info while manual defaults re
     assert.deepEqual(manual.value, bundle());
 });
 
+test('manual automatic regeneration uses current settings and replaces the current group while preserving the interval progress', async () => {
+    const h = fixture();
+    assert.throws(() => h.controller.regenerate(), /开启/);
+    await h.start(3);
+    await h.receive();
+    const groupId = h.controller.state().groupId;
+    h.controller.update({ interval: 3, prompt: '这次集中写港口情节。' });
+    const pending = deferred();
+    h.setRun(() => pending.promise);
+    const running = h.controller.regenerate();
+    await tick();
+    h.controller.regenerate();
+    assert.equal(h.requests.length, 2);
+    assert.ok(h.requests[1][0].some(message => message.content.includes('这次集中写港口情节。')));
+    pending.resolve(JSON.stringify(autoBundle({ command: '新生成的港口情节' })));
+    await running;
+    assert.equal(h.controller.state().groupId, groupId);
+    assert.equal(h.controller.state().progress, 1);
+    assert.equal(activeGroup(effectiveRandomSettings(h.ctx)).rules[0].commands[0], '新生成的港口情节');
+});
+
 for (const [diceSides, commandCount, endPoints] of [
     [6, 4, [1, 3, 4, 6]], [20, 3, [6, 13, 20]], [100, 3, [33, 66, 100]],
 ]) for (const mapping of ['first', 'even']) test(`d${diceSides} ${mapping} maps all faces correctly`, async () => {

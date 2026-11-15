@@ -23,6 +23,9 @@ export function mountAutoOracleUI(dialog, getContext, controller) {
         $('#ari-auto-oracle-label').textContent = state.enabled ? '当前聊天：自动生成已开启' : '当前聊天：自动生成已关闭';
         form.hidden = !ready || (!settingUp && !state.enabled);
         $('#ari-auto-oracle-start-actions').hidden = !settingUp;
+        const regenerate = $('#ari-auto-oracle-regenerate');
+        regenerate.hidden = settingUp || !state.enabled;
+        regenerate.disabled = controller.busy || controller.pending;
         $('#ari-auto-oracle-hint').textContent = !ready ? '请先打开一个聊天，每个聊天分别开启。'
             : settingUp ? '确认间隔和提示词后，点击“开始自动生成”将立即调用一次。取消则不调用 API。'
                 : '只计新增 AI 楼层，重生成、滑动重抽和续写不计数。修改间隔会重新计数；修改提示词和数量从下次生成生效。';
@@ -79,6 +82,9 @@ export function mountAutoOracleUI(dialog, getContext, controller) {
     ruleCount.addEventListener('change', update);
     diceSides.addEventListener('change', update);
     mapping.addEventListener('change', update);
+    $('#ari-auto-oracle-regenerate').addEventListener('click', () => {
+        try { controller.update(read()); void controller.regenerate(); refresh(); } catch (error) { showError(error); }
+    });
     $('#ari-auto-oracle-setup-cancel').addEventListener('click', cancelSetup);
     dialog.addEventListener('close', cancelSetup);
     refresh();

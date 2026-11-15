@@ -112,7 +112,8 @@ export function mountNarrativePanel(dialog, getContext, onChange = () => {}, opt
             const last = section('上次发送'); const turnIndex = ctx.chat.findLastIndex(m => m.is_user && m.extra?.[SETTINGS_KEY]?.narrative);
             if (turnIndex < 0) last.append(el('p', '还没有剧情增强发送记录。'));
             else { const record = ctx.chat[turnIndex].extra[SETTINGS_KEY], reports = visibleTurnReports(ctx.chat, turnIndex), uses = reports.flatMap(r => r.uses);
-                last.append(el('p', `${record.narrative.injected ? '已注入' : '未注入'}；${reports.length ? `已收到 ${reports.length} 条有效 AI 回报` : '尚未确认采用情况'}`));
+                const injectionStatus = record.narrative.injected ? '指令已注入' : record.narrative.promptInjectionVersion === 1 && record.narrative.prompt && !record.narrative.promptSuppressed ? '剧情记录协议已注入，本轮无指令' : '未注入';
+                last.append(el('p', `${injectionStatus}；${reports.length ? `已收到 ${reports.length} 条有效 AI 回报` : '尚未确认采用情况'}`));
                 const sent = (record.rolls ?? []).filter(roll => record.narrative.injected && ['selected','persistent'].includes(roll.reason));
                 if (!sent.length) last.append(el('p', '本次没有发送随机指令。', 'ari-story-help'));
                 for (const roll of sent) { const usesFor = uses.filter(use => use.candidateId === roll.candidateId), labels = [...new Set(usesFor.map(use => use.status === 'adopted' ? 'AI 报告采用' : 'AI 报告未采用'))]; const item = el('article', null, 'ari-story-sent'); item.append(el('strong', roll.ruleName || '随机指令'), el('p', roll.command || ''), el('small', labels.length ? labels.join('、') : '尚未确认')); last.append(item); }
