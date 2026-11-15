@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { mountMetadataEditor } from '../narrative-ui.js';
-import { SETTINGS_KEY } from '../core.js';
-import { NARRATIVE_KEY, foldNarrative } from '../narrative.js';
+import { SETTINGS_KEY, createGroup, normalizeSettings } from '../core.js';
+import { NARRATIVE_KEY, foldNarrative, normalizeNarrativeConfig, prepareNarrativeTurn } from '../narrative.js';
 import { mountNarrativePanel, visibleTurnReports } from '../narrative-panel.js';
+import { importConfigBundle, parseConfigFile, serializeConfigFile } from '../config-transfer.js';
 
 test('editing an MVU comparison saves the current path and typed value without blur', t => {
     class Element extends EventTarget {
@@ -48,6 +49,86 @@ test('editing an MVU comparison saves the current path and typed value without b
     edit('比较值', '', 'input');
     assert.equal(saved.conditions[0].value, '');
     assert.ok(value.validationMessage);
+});
+
+function metadataFixture(t, metadata, threads) {
+    class Element extends EventTarget {
+        constructor(tag) { super(); this.tag = tag; this.children = []; this.attrs = {}; }
+        append(...children) { this.children.push(...children); }
+        replaceChildren(...children) { this.children = children; }
+        setAttribute(name, value) { this.attrs[name] = value; }
+        setCustomValidity(value) { this.validationMessage = value; }
+    }
+    globalThis.document = { createElement: tag => new Element(tag) };
+    globalThis.Option = class { constructor(text, value) { Object.assign(this, { text, value }); } };
+    t.after(() => { delete globalThis.document; delete globalThis.Option; });
+    let root, saved = structuredClone(metadata);
+    const reopen = () => {
+        root = new Element('div');
+        mountMetadataEditor(root, () => saved, value => { saved = value; }, { getThreads: () => threads });
+    };
+    const find = (node, matches) => {
+        if (matches(node)) return node;
+        for (const child of node.children ?? []) { const found = find(child, matches); if (found) return found; }
+    };
+    const field = label => find(root, node => node.attrs?.['aria-label'] === label);
+    reopen();
+    return { reopen, field, saved: () => saved,
+        warning: () => find(root, node => node.tag === 'p' && /重新.*绑定/.test(node.textContent ?? '')),
+        edit(label, value) { const input = field(label); assert.ok(input, label); input.value = value; input.dispatchEvent(new Event('change')); },
+    };
+}
+
+for (const status of ['paused', 'completed']) for (const topFirst of [true, false]) {
+    test(`imported ${status} condition can be rebound without adding an active-thread link (${topFirst ? 'association first' : 'condition first'})`, t => {
+        const source = createGroup('仅有剧情线条件');
+        const rule = source.rules[0]; rule.diceSides = 1; rule.commands[0] = '按条件描写后续气氛';
+        rule.commandMetadata[0] = { effect: 'detail', conditions: [{ type: 'thread', threadId: 'old-thread', status }] };
+        const settings = normalizeSettings();
+        const imported = importConfigBundle(parseConfigFile(serializeConfigFile([source])), settings, { groups: [] }).randomGroups[0];
+        const threads = [{ id: 'current-thread', title: '当前剧情线', status, cause: '起因', question: '问题', facts: [] }];
+        const h = metadataFixture(t, imported.rules[0].commandMetadata[0], threads);
+        assert.notEqual(h.field('剧情线').value, '', 'Unresolved imports must not look already unlinked.');
+        const chooseAssociation = () => h.edit('剧情线', '');
+        const chooseCondition = () => h.edit('条件 1 剧情线', 'current-thread');
+        (topFirst ? chooseAssociation : chooseCondition)();
+        assert.equal(h.saved().needsBinding, true);
+        (topFirst ? chooseCondition : chooseAssociation)();
+        assert.equal(h.saved().needsBinding, undefined);
+        assert.equal(h.saved().threadId, undefined);
+        assert.equal(h.saved().conditions[0].threadId, 'current-thread');
+        assert.equal(h.warning().hidden, true);
+        imported.rules[0].commandMetadata[0] = h.saved();
+        const result = prepareNarrativeTurn(settings, normalizeNarrativeConfig({ enabled: true, longGroupId: imported.id }),
+            { ...foldNarrative([]), ready: true, stat: {}, threads }, () => 0);
+        assert.equal(result.rolls[0].reason, 'selected');
+    });
+}
+
+test('top-level rebinding preserves independent condition targets and subsequent edits', t => {
+    const threads = [{ id: 'active', title: '正在推进', status: 'active' }, { id: 'other', title: '另一条线', status: 'completed' }];
+    const h = metadataFixture(t, { needsBinding: true, conditions: [{ type: 'thread', status: 'active' }] }, threads);
+    h.edit('剧情线', 'active');
+    h.edit('条件 1 剧情线', 'other');
+    h.edit('条件 1 剧情线状态', 'completed');
+    assert.equal(h.saved().threadId, 'active');
+    assert.deepEqual(h.saved().conditions, [{ type: 'thread', threadId: 'other', status: 'completed' }]);
+    assert.equal(h.saved().needsBinding, undefined);
+    assert.equal(h.warning().hidden, true);
+});
+
+test('reopening incomplete rebinding requires an explicit association choice and never autofills conditions', t => {
+    const threads = [{ id: 'active', title: '正在推进', status: 'active' }];
+    const h = metadataFixture(t, { needsBinding: true, conditions: [{ type: 'thread', status: 'active' }] }, threads);
+    h.edit('剧情线', 'active');
+    assert.equal(h.saved().conditions[0].threadId, undefined);
+    assert.equal(h.saved().needsBinding, true);
+    h.reopen();
+    assert.notEqual(h.field('剧情线').value, 'active');
+    h.edit('条件 1 剧情线', 'active');
+    assert.equal(h.saved().needsBinding, true);
+    h.edit('剧情线', 'active');
+    assert.equal(h.saved().needsBinding, undefined);
 });
 
 function panelFixture(t) {

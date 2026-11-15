@@ -107,7 +107,8 @@ export function addSkillTemplate(library, templateId) {
 export function loadSkillGroup(current, group) {
     const next = snapshot(group);
     return normalizeSkillSettings({ ...current, ...next, groupId: group.id,
-        // Loading is an explicit change of sheet. Never consume the old sheet's pending checks.
+        // Ordinary loads keep pending choices, but do not inherit Oracle's one-time gate.
+        selectionRevision: undefined, freshSelectionSkillId: undefined,
         skills: next.skills.map(skill => ({ ...skill, id: newSkillId() })) });
 }
 

@@ -129,6 +129,95 @@ test('wrong revisions reject reports and evidence must be in narrative text outs
     assert.deepEqual(foldNarrative(chat).threads, []);
 });
 
+const reportPackets = {
+    'raw _.set': claim => `_.set('随机指令工作台.剧情回报', ${JSON.stringify(claim)});`,
+    'raw _.assign': claim => `_.assign('随机指令工作台', ${JSON.stringify({ 剧情回报: claim })});`,
+    'standalone JSONPatch': claim => `<JSONPatch>${JSON.stringify([
+        { op: 'replace', path: '/随机指令工作台/剧情回报', value: claim },
+    ])}</JSONPatch>`,
+    'standalone JSON_Patch': claim => `<JSON_Patch>${JSON.stringify([
+        { op: 'add', path: '/随机指令工作台/剧情回报', value: claim },
+    ])}</JSON_Patch>`,
+    'VariableUpdate wrapper': claim => `<VariableUpdate>_.set('随机指令工作台.剧情回报', ${JSON.stringify(claim)});</VariableUpdate>`,
+};
+for (const [format, encode] of Object.entries(reportPackets)) {
+    test(`${format} cannot use its own report as narrative evidence`, () => {
+        const turn = turnAt([], 'first');
+        const claim = report(turn, { newThread: newThread('蓝签'), updates: [{
+            threadId: 'existing', action: 'advance', fact: '蓝签已经登记。', evidence: '他捡起蓝签。',
+        }] });
+        const packet = encode(claim);
+        const body = '他直接离开了。\n' + packet;
+        const checked = validateNarrativeReport(claim, turn, body);
+        assert.equal(checked.newThread, null);
+        assert.deepEqual(checked.updates, []);
+        assert.deepEqual(foldNarrative([user(turn), reply('self-evidence', { 0: { report: claim } }, 0, body)]).threads, []);
+        for (const text of ['他捡起蓝签。\n' + packet, packet + '\n他捡起蓝签。']) {
+            const supported = validateNarrativeReport(claim, turn, text);
+            assert.deepEqual(supported.newThread, claim.newThread);
+            assert.deepEqual(supported.updates, claim.updates);
+        }
+    });
+}
+
+test('raw MVU commands keep escaped strings and nested parentheses inside the command boundary', () => {
+    const turn = turnAt([], 'escaped');
+    const claim = report(turn, { newThread: {
+        ...newThread('蓝签'), title: '他说 "停下 );"，又写下 \\ 和 _.set(。', cause: '反斜杠结尾\\',
+    } });
+    const packet = reportPackets['raw _.set'](claim);
+    const comment = '// 他捡起蓝签。';
+    const body = `他直接离开了。\n_.set('场景.计数', (1 + (2)));\n${packet}${comment}`;
+    assert.equal(validateNarrativeReport(claim, turn, body).newThread, null);
+    assert.deepEqual(validateNarrativeReport(claim, turn, body + '\n他捡起蓝签。').newThread, claim.newThread);
+});
+
+test('XML update boundaries ignore closing tags inside structured strings', () => {
+    const turn = turnAt([], 'quoted-markup');
+    const claim = report(turn, { newThread: {
+        ...newThread('蓝签'), title: '字面量 </JSONPatch> 和 </UpdateVariable>，以及转义引号 "。',
+    } });
+    const patch = reportPackets['standalone JSONPatch'](claim);
+    for (const packet of [patch, `<UpdateVariable><Analysis>Don't add a second update.</Analysis>${patch}</UpdateVariable>`]) {
+        assert.equal(validateNarrativeReport(claim, turn, packet).newThread, null);
+        assert.deepEqual(validateNarrativeReport(claim, turn, packet + '\n他捡起蓝签。').newThread, claim.newThread);
+    }
+});
+
+const yamlTagText = '便条上写着 </JSONPatch> 和 </UpdateVariable>';
+for (const [format, title, titleYaml, comment = ''] of [
+    ['plain scalar', yamlTagText, `      title: ${yamlTagText}`],
+    ['literal block scalar', yamlTagText, `      title: |-\n        ${yamlTagText}`],
+    ['folded block scalar', yamlTagText, `      title: >-\n        ${yamlTagText}`],
+    ['comments', '蓝签', `      title: 蓝签 # ${yamlTagText}`, `# ${yamlTagText}\n`],
+    ['single-quoted scalar', "Don't " + yamlTagText + '\\', `      title: 'Don''t ${yamlTagText}\\'`],
+]) {
+    test(`YAML ${format} cannot end an update with a literal closing tag`, () => {
+        const turn = turnAt([], 'yaml');
+        const claim = report(turn, { newThread: { ...newThread(title), cause: '发现蓝签' } });
+        const yaml = `${comment}- op: replace\n  path: /随机指令工作台/剧情回报\n  value:\n` +
+            `    version: 1\n    turnId: ${turn.turnId}\n    baseRevision: ${turn.baseRevision}\n` +
+            `    uses: []\n    updates: []\n    newThread:\n${titleYaml}\n` +
+            '      cause: 发现蓝签\n      question: 谁留下的？\n      evidence: 他捡起蓝签。\n';
+        for (const fenced of [false, true]) for (const wrapped of [false, true]) {
+            const patch = '<JSONPatch>\n' + (fenced ? '```yaml\n' + yaml + '```\n' : yaml) + '</JSONPatch>';
+            const packet = wrapped ? '<UpdateVariable>\n' + patch + '\n</UpdateVariable>' : patch;
+            assert.equal(validateNarrativeReport(claim, turn, '他直接离开了。\n' + packet).newThread, null);
+            assert.deepEqual(validateNarrativeReport(claim, turn, packet + '\n他捡起蓝签。').newThread, claim.newThread);
+        }
+    });
+}
+
+test('evidence remains exact prose without deleting ordinary JSON or joining across update commands', () => {
+    const turn = turnAt([], 'prose');
+    const claim = report(turn, { newThread: newThread('蓝签') });
+    const ordinary = '纸上写着 {"记录":"他捡起蓝签。"}，旁边还有 _.settings(1) 和 obj.set(2)。';
+    assert.deepEqual(validateNarrativeReport(claim, turn, ordinary).newThread, claim.newThread);
+    for (const packet of [reportPackets['raw _.set'](claim), `<UpdateVariable>${JSON.stringify(claim)}</UpdateVariable>`]) {
+        assert.equal(validateNarrativeReport(claim, turn, '他捡起' + packet + '蓝签。').newThread, null);
+    }
+});
+
 test('portable v2 preserves slot and d100 metadata without carrying either form of thread reference', () => {
     const id = 'isolated-old-thread';
     const long = group('long', [

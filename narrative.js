@@ -139,13 +139,125 @@ function revisionOf(events) {
     return `r${(hash >>> 0).toString(36)}`;
 }
 const nonempty = value => typeof value === 'string' && !!value.trim();
+
+const updateTagKind = name => /^json_?patch$/i.test(name) ? 'patch'
+    : /^status_current_variables$/i.test(name) ? 'status' : 'update';
+
+// Find protocol boundaries without evaluating model-controlled arguments. Quoted
+// parentheses and XML-looking string values must not end an update early.
+function protocolEnd(text, start, tagName) {
+    let depth = 1, quote = '', escaped = false;
+    const kind = tagName ? updateTagKind(tagName) : null;
+    let yaml = false, pendingData = !!kind, scalarIndent, lineStart = start;
+    for (let i = start; i < text.length; i++) {
+        const char = text[i];
+        if (pendingData && !/\s/.test(char) && char !== '<') {
+            if (text.startsWith('```', i)) {
+                const end = text.indexOf('\n', i);
+                if (end < 0) return -1;
+                i = end; lineStart = end + 1;
+                continue;
+            }
+            yaml = /^(?:-(?:\s|$)|#|\w+\s*:)/.test(text.slice(i));
+            pendingData = false;
+        }
+        // MVU accepts YAML patches too. Plain and indented block scalars can
+        // contain literal closing tags; only the dedented tag ends the update.
+        if (yaml && i === lineStart && !quote) {
+            const lineEnd = text.indexOf('\n', i), end = lineEnd < 0 ? text.length : lineEnd;
+            const line = text.slice(i, end).replace(/\r$/, ''), indent = line.match(/^\s*/)[0].length;
+            if (scalarIndent !== undefined) {
+                if (!line.trim() || indent > scalarIndent) {
+                    i = end; lineStart = end + 1;
+                    continue;
+                }
+                scalarIndent = undefined;
+            }
+            if (/^\s*(?:-\s+)?[^#\r\n]*:\s*[|>](?:[+-]?[1-9]?|[1-9][+-]?)\s*(?:#.*)?$/.test(line)) {
+                scalarIndent = indent + (line.trimStart().startsWith('- ') ? 2 : 0);
+                i = end; lineStart = end + 1;
+                continue;
+            }
+        }
+        if (char === '\n') lineStart = i + 1;
+        if (quote) {
+            if (escaped) escaped = false;
+            else if (char === '\\' && (!yaml || quote === '"')) escaped = true;
+            else if (char === quote) {
+                if (yaml && quote === "'" && text[i + 1] === "'") i++;
+                else quote = '';
+            }
+            continue;
+        }
+        if (char === '"' || char === "'" || (!kind && char === '`')) {
+            // Analysis inside an XML update can contain ordinary contractions.
+            if (!(kind && char === "'" && /[\p{L}\p{N}]/u.test(text[i - 1] ?? ''))) quote = char;
+            continue;
+        }
+        if (!yaml && text.startsWith('/*', i)) {
+            const end = text.indexOf('*/', i + 2);
+            if (end < 0) return -1;
+            i = end + 1;
+            continue;
+        }
+        if ((!yaml && text.startsWith('//', i) && !/[\p{L}\p{N}:]/u.test(text[i - 1] ?? '')) ||
+            (yaml && char === '#' && (i === lineStart || /\s/.test(text[i - 1] ?? '')))) {
+            const end = text.indexOf('\n', i);
+            if (end < 0) return -1;
+            i = end; lineStart = end + 1;
+            continue;
+        }
+        if (yaml && char === ':' && /\s/.test(text[i + 1] ?? '')) {
+            const plain = /^[ \t]+[^\s"'[{|>#\r\n][^\r\n]*/.exec(text.slice(i + 1));
+            if (plain) { i += plain[0].length; continue; }
+        }
+        if (kind) {
+            if (char !== '<') continue;
+            const tag = /^<(\/?)\s*(updatevariable|variableupdate|update|status_current_variables|json_?patch)\b[^>]*>/i.exec(text.slice(i));
+            if (!tag) continue;
+            if (updateTagKind(tag[2]) === kind) depth += tag[1] ? -1 : 1;
+            i += tag[0].length - 1;
+            if (!depth) return i + 1;
+            yaml = false; pendingData = !tag[1]; scalarIndent = undefined; lineStart = i + 1;
+        } else {
+            if (char === '(') depth++;
+            else if (char === ')' && --depth === 0) {
+                if (text[i + 1] !== ';') return -1;
+                const end = i + 2;
+                // MVU treats a trailing // line as the command's reason.
+                return end + (/^\s*\/\/[^\r\n]*/.exec(text.slice(end))?.[0].length ?? 0);
+            }
+        }
+    }
+    return -1;
+}
+
+function narrativeProse(body) {
+    if (typeof body !== 'string') return [];
+    const chunks = [];
+    const marker = /<\s*(updatevariable|variableupdate|update|status_current_variables|json_?patch)\b[^>]*>|_\.(set|insert|assign|remove|unset|delete|add)\(/gi;
+    let cursor = 0;
+    for (let match; (match = marker.exec(body));) {
+        // XML names are case-insensitive; the legacy MVU primitives are not.
+        if (match[2] && match[2] !== match[2].toLowerCase()) continue;
+        const end = protocolEnd(body, marker.lastIndex, match[1]);
+        if (end < 0) continue;
+        chunks.push(body.slice(cursor, match.index));
+        cursor = marker.lastIndex = end;
+    }
+    chunks.push(body.slice(cursor));
+    // Keep segments separate: removing an update must not synthesize evidence
+    // by joining text that never appeared consecutively in the original reply.
+    return chunks;
+}
+
 export function validateNarrativeReport(report, turn, body) {
     const issues = [];
     if (!object(report) || report.version !== 1 || report.turnId !== turn.turnId || report.baseRevision !== turn.baseRevision)
         return { valid: false, issues: ['回报协议、轮次或基础版本不匹配。'] };
     if (!Array.isArray(report.uses) || !Array.isArray(report.updates)) return { valid: false, issues: ['回报数组缺失。'] };
-    const prose = typeof body === 'string' ? body.replace(/<(UpdateVariable|update|status_current_variables)\b[^>]*>[\s\S]*?<\/\1>/gi, '') : '';
-    const evidence = value => nonempty(value) && prose.includes(value);
+    const prose = narrativeProse(body);
+    const evidence = value => nonempty(value) && prose.some(part => part.includes(value));
     const uses = report.uses.filter(use => object(use) && turn.candidates.includes(use.candidateId) && ['adopted', 'ignored'].includes(use.status));
     if (uses.length !== report.uses.length || new Set(uses.map(use => use.candidateId)).size !== uses.length) issues.push('部分指令采用回报无效。');
     const updates = report.updates.filter(update => object(update) && nonempty(update.threadId) &&

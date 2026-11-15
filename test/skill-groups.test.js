@@ -91,6 +91,27 @@ test('loading a group keeps pending selections and uses the new sheet modifiers'
     assert.equal(readSkillSelection(chat, variables, next).checks[0].modifier, 7);
 });
 
+for (const marker of [{ selectionRevision: 'oracle-sheet' }, { freshSelectionSkillId: 'eye' }]) {
+    test(`loading a saved group drops ${Object.keys(marker)[0]} and keeps checks working across turns and reloads`, () => {
+        const current = normalizeSkillSettings({ ...sheet(), ...marker });
+        const previous = createSkillTurn(current, { checks: [], issues: [] });
+        const chat = [{ is_user: true, extra: { auto_random_input: { skills: previous } } }, { mes: '需要察觉' }];
+        const variables = { stat_data: { 随机指令工作台: { 技能判定: { 待判定: [{ 技能名: '察觉', DC: 50 }] } } } };
+        let next = loadSkillGroup(current, createSkillGroup('重新载入的技能表', current));
+        next.skills[0].modifier = 7;
+        assert.equal(next.selectionRevision, undefined);
+        assert.equal(next.freshSelectionSkillId, undefined);
+        for (let round = 0; round < 4; round++) {
+            next = normalizeSkillSettings(JSON.parse(JSON.stringify(next)));
+            const selection = readSkillSelection(chat, variables, next);
+            assert.equal(selection.checks.length, 1, `round ${round + 1}`);
+            assert.equal(selection.checks[0].modifier, 7);
+            const turn = createSkillTurn(next, selection, () => 0.5);
+            chat.push({ is_user: true, extra: { auto_random_input: { skills: turn } } }, { mes: '再次选择察觉' });
+        }
+    });
+}
+
 test('dirty comparison ignores runtime identities and enable state, but tracks all reusable settings', () => {
     const group = createSkillGroup('斥候', sheet());
     const current = loadSkillGroup(normalizeSkillSettings(), group);

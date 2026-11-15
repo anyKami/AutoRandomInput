@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { SETTINGS_KEY, activeGroup, createRule, normalizeSettings, processMessage } from '../core.js';
 import { installSendHooks } from '../send.js';
-import { AUTO_ORACLE_KEY } from '../oracle-auto-state.js';
+import { AUTO_ORACLE_KEY, autoOracleOwner } from '../oracle-auto-state.js';
 
 const user = mes => ({ is_user: true, is_system: false, mes, extra: {} });
 function host() {
@@ -51,7 +51,7 @@ test('a chat automatic group reaches the prepared input and saved roll without c
     const h = host(), manualId = h.settings.activeGroupId;
     const group = { id: 'chat-auto-group', name: '聊天自动配置', rules: [createRule('当前阶段', { diceSides: 1, commands: ['自动剧情指令'] })] };
     h.settings.groups.push(group);
-    h.ctx.chatMetadata = { [AUTO_ORACLE_KEY]: { groupId: group.id, useGroup: true } };
+    h.ctx.chatMetadata = { [AUTO_ORACLE_KEY]: { groupId: group.id, useGroup: true, ownerKey: autoOracleOwner(h.ctx) } };
     await h.install(); await h.before();
     assert.ok(h.input.value.includes('自动剧情指令'));
     const message = await h.commit();

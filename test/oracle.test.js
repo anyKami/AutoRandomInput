@@ -180,13 +180,56 @@ test('explicit enable flags are independent; random config works without MVU', a
 test('applying generated skills waits for a request using the new sheet before consuming an old MVU selection', async () => {
     const h = fixture(); const draft = await h.service.generate('both', {}); h.service.apply(draft.value);
     const sheet = normalizeSkillSettings(h.ctx.chatMetadata[SKILL_SETTINGS_KEY]);
-    assert.ok(!serializeConfigFile([], [{ ...sheet, name: '分享配置' }]).includes('freshSelectionSkillId'));
+    const exported = serializeConfigFile([], [{ ...sheet, name: '分享配置' }]);
+    assert.ok(!exported.includes('freshSelectionSkillId'));
+    assert.ok(!exported.includes('selectionRevision'));
     const data = { stat_data: { 随机指令工作台: { 技能判定: { 待判定: [{ 技能名: '调查', DC: 10 }] } } } };
     assert.equal(readSkillSelection(h.ctx.chat, data, sheet).checks.length, 0);
     const turn = createSkillTurn(sheet, { checks: [], issues: [] });
     h.ctx.chat.push({ is_user: true, mes: 'next', extra: { auto_random_input: { skills: turn } } });
     h.ctx.chat.push({ is_user: false, mes: 'new selection' });
     assert.equal(readSkillSelection(h.ctx.chat, data, sheet).checks.length, 1);
+});
+for (const when of ['before the first request', 'after the first request']) {
+    test(`deleting the first generated skill ${when} never reopens the one-time selection gate`, async () => {
+        const h = fixture(); const draft = await h.service.generate('both', {}); h.service.apply(draft.value);
+        let sheet = normalizeSkillSettings(h.ctx.chatMetadata[SKILL_SETTINGS_KEY]);
+        const revision = sheet.selectionRevision;
+        assert.ok(revision);
+        const data = { stat_data: { 随机指令工作台: { 技能判定: { 待判定: [{ 技能名: '运动', DC: 10 }] } } } };
+        const send = () => {
+            const turn = createSkillTurn(sheet, readSkillSelection(h.ctx.chat, data, sheet), () => 0.5);
+            h.ctx.chat.push({ is_user: true, extra: { auto_random_input: { skills: turn } } }, { mes: '选择运动 DC10' });
+        };
+        assert.equal(readSkillSelection(h.ctx.chat, data, sheet).checks.length, 0);
+        if (when === 'after the first request') send();
+        sheet.skills.shift();
+        sheet = normalizeSkillSettings(JSON.parse(JSON.stringify(sheet)));
+        assert.equal(sheet.selectionRevision, revision);
+        assert.equal(readSkillSelection(h.ctx.chat, data, sheet).checks.length, when === 'before the first request' ? 0 : 1);
+        if (when === 'before the first request') send();
+        for (let round = 0; round < 3; round++) {
+            sheet = normalizeSkillSettings(JSON.parse(JSON.stringify(sheet)));
+            assert.equal(readSkillSelection(h.ctx.chat, data, sheet).checks.length, 1, `round ${round + 1}`);
+            send();
+        }
+        // A later ordinary message does not undo the completed handshake.
+        h.ctx.chat.push({ is_user: true, mes: '暂时关闭技能检定的一轮' }, { mes: '继续运动' });
+        assert.equal(readSkillSelection(h.ctx.chat, data, sheet).checks.length, 1);
+    });
+}
+test('applying another generated sheet starts a new selection gate instead of reusing an older request', async () => {
+    const h = fixture();
+    const data = { stat_data: { 随机指令工作台: { 技能判定: { 待判定: [{ 技能名: '调查', DC: 10 }] } } } };
+    const first = await h.service.generate('both', {}); h.service.apply(first.value);
+    const before = normalizeSkillSettings(h.ctx.chatMetadata[SKILL_SETTINGS_KEY]);
+    const turn = createSkillTurn(before, { checks: [], issues: [] });
+    h.ctx.chat.push({ is_user: true, mes: 'next', extra: { auto_random_input: { skills: turn } } }, { mes: '选择调查' });
+    assert.equal(readSkillSelection(h.ctx.chat, data, before).checks.length, 1);
+    const second = await h.service.generate('both', {}); h.service.apply(second.value);
+    const after = normalizeSkillSettings(h.ctx.chatMetadata[SKILL_SETTINGS_KEY]);
+    assert.notEqual(after.selectionRevision, before.selectionRevision);
+    assert.equal(readSkillSelection(h.ctx.chat, data, after).checks.length, 0);
 });
 test('bad output and invalid edited drafts cannot partially mutate either library', async () => {
     const data = config(); data.skillGroups[0].skills[0].modifier = 200;

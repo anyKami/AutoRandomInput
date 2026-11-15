@@ -20,7 +20,7 @@ const currentGroup = () => activeGroup(effectiveRandomSettings(context()));
 const save = () => context().saveSettingsDebounced();
 let dialog;
 let initialized = false;
-let groupAction = '';
+let groupAction = null;
 let selectedRuleId = '';
 let skillService;
 let skillUI;
@@ -247,13 +247,16 @@ function render() {
 
 function closeGroupForm() {
     $('#ari-group-form').hidden = true;
-    groupAction = '';
+    groupAction = null;
 }
 
 function openGroupForm(action) {
-    groupAction = action;
     const group = currentGroup();
-    const labels = { new: '新建配置组', copy: '复制为新配置组', rename: '重命名配置组', delete: `删除“${group.name}”？`, 'delete-rule': `删除骰子指令“${selectedRule().name}”？` };
+    const rule = selectedRule();
+    // A background generation can change the selection while this form is open.
+    // Keep the confirmed identities instead of resolving the current selection later.
+    groupAction = { type: action, groupId: group.id, ruleId: rule.id };
+    const labels = { new: '新建配置组', copy: '复制为新配置组', rename: '重命名配置组', delete: `删除“${group.name}”？`, 'delete-rule': `删除骰子指令“${rule.name}”？` };
     $('#ari-group-form-label').textContent = labels[action];
     const input = $('#ari-group-name');
     const deleting = action === 'delete' || action === 'delete-rule';
@@ -262,6 +265,7 @@ function openGroupForm(action) {
         : action === 'copy' ? uniqueGroupName(settings(), `${group.name} 副本`) : group.name;
     $('#ari-group-error').textContent = deleting ? (action === 'delete' ? '该组保存的全部骰子指令将被删除。' : '这套骰子指令及其全部命令将被删除。') : '';
     $('#ari-group-confirm').textContent = deleting ? '确认删除' : '确定';
+    $('#ari-group-confirm').disabled = false;
     $('#ari-group-form').hidden = false;
     if (!deleting) { input.focus(); input.select(); }
     else $('#ari-group-cancel').focus();
@@ -269,26 +273,36 @@ function openGroupForm(action) {
 
 function submitGroup(event) {
     event.preventDefault();
+    const action = groupAction;
+    if (!action) return;
     const store = settings();
-    const group = currentGroup();
-    if (groupAction === 'delete-rule') {
+    const group = store.groups.find(item => item.id === action.groupId);
+    if ((action.type !== 'new' && !group) || (action.type === 'delete-rule' && !group?.rules.some(rule => rule.id === action.ruleId))) {
+        groupAction = null;
+        $('#ari-group-error').textContent = '目标配置已被删除或替换，请重新打开操作。';
+        $('#ari-group-confirm').disabled = true;
+        return;
+    }
+    if (action.type === 'delete-rule') {
         if (group.rules.length <= 1) return;
-        group.rules = group.rules.filter(rule => rule.id !== selectedRule().id);
-        selectedRuleId = group.rules[0].id;
-    } else if (groupAction === 'delete') {
+        group.rules = group.rules.filter(rule => rule.id !== action.ruleId);
+        if (currentGroup().id === group.id && !group.rules.some(rule => rule.id === selectedRuleId)) selectedRuleId = group.rules[0].id;
+    } else if (action.type === 'delete') {
         if (store.groups.length <= 1) return;
+        const selected = currentGroup().id === group.id;
         store.groups = store.groups.filter(item => item.id !== group.id);
-        selectRandomGroup(context(), store.groups[0].id);
+        if (store.activeGroupId === group.id) store.activeGroupId = store.groups[0].id;
+        if (selected) selectRandomGroup(context(), store.groups[0].id);
     } else {
         const name = $('#ari-group-name').value.trim();
         if (!name) { $('#ari-group-error').textContent = '请输入配置组名称。'; return; }
-        if (store.groups.some(item => item.name === name && (groupAction !== 'rename' || item.id !== group.id))) {
+        if (store.groups.some(item => item.name === name && (action.type !== 'rename' || item.id !== group.id))) {
             $('#ari-group-error').textContent = '这个名称已被使用，请换一个。';
             return;
         }
-        if (groupAction === 'rename') group.name = name;
+        if (action.type === 'rename') group.name = name;
         else {
-            const next = createGroup(name, groupAction === 'copy' ? group : undefined);
+            const next = createGroup(name, action.type === 'copy' ? group : undefined);
             store.groups.push(next);
             selectRandomGroup(context(), next.id);
         }
@@ -417,11 +431,17 @@ async function init() {
     const oracleGate = createOracleRequestGate();
     const oracleService = createOracleService(context, skillService, globalThis, { gate: oracleGate });
     oracleSettingsUI = mountOracleSettings(dialog, context, oracleService);
-    oracleUI = mountOracleUI(dialog, context, oracleService, skillService, () => { selectedRuleId = ''; render(); });
+    oracleUI = mountOracleUI(dialog, context, oracleService, skillService, () => { selectedRuleId = ''; closeGroupForm(); render(); });
+    // This host export includes group generation and stays accurate on early exits
+    // that emit GENERATION_STARTED without a matching GENERATION_ENDED.
+    let isMainGenerating;
+    try { ({ isGenerating: isMainGenerating } = await import('../../../../script.js')); }
+    catch { /* Older hosts retain the event-based fallback. */ }
     const autoOracle = installAutoOracle(context,
         createOracleService(context, skillService, globalThis, { gate: oracleGate, automatic: true }), {
+            isMainGenerating,
             onChange: () => { autoOracleUI?.refresh(); oracleUI?.refreshCaps(); narrativeUI?.refresh(); },
-            onApply: () => { selectedRuleId = ''; render(); },
+            onApply: () => { selectedRuleId = ''; closeGroupForm(); render(); },
             onChatChange: () => { selectedRuleId = ''; closeGroupForm(); render(); },
         });
     autoOracleUI = mountAutoOracleUI(dialog, context, autoOracle);

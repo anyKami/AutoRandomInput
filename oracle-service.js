@@ -1,6 +1,6 @@
 import { SETTINGS_KEY } from './core.js';
 import { SKILL_GROUPS_KEY, loadSkillGroup } from './skill-groups.js';
-import { SKILL_SETTINGS_KEY, normalizeSkillSettings } from './skills.js';
+import { SKILL_SETTINGS_KEY, newSkillId, normalizeSkillSettings } from './skills.js';
 import { importConfigBundle } from './config-transfer.js';
 import { mvuApi } from './mvu-skills.js';
 import { normalizeOracleSettings, oracleMessages, parseOracleReply, validateGeneratedConfig } from './oracle-config.js';
@@ -197,7 +197,7 @@ export function createOracleService(getContext, skillService, host = globalThis,
                 }
                 if (hasSkills) {
                     sheet = loadSkillGroup(ctx.chatMetadata[SKILL_SETTINGS_KEY] ?? normalizeSkillSettings(), added.skillGroups[0]);
-                    sheet.freshSelectionSkillId = sheet.skills[0].id;
+                    sheet.selectionRevision = newSkillId();
                     if (enableSkills) sheet.enabled = true;
                 }
             }

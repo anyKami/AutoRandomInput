@@ -1,5 +1,5 @@
 import { activeGroup, SETTINGS_KEY } from './core.js';
-import { effectiveRandomSettings } from './oracle-auto-state.js';
+import { autoOracleOwner, effectiveRandomSettings } from './oracle-auto-state.js';
 import { SKILL_GROUPS_KEY } from './skill-groups.js';
 import { SKILL_SETTINGS_KEY } from './skills.js';
 import { importConfigBundle, parseConfigFile, previewConfigImport, serializeConfigFile } from './config-transfer.js';
@@ -26,6 +26,15 @@ export function mountConfigTransferUI(dialog, getContext, onImport) {
     let sourceIdentity;
     let pending;
     let fileRead = 0;
+
+    const randomSource = ctx => {
+        const config = narrativeConfig(ctx);
+        const group = activeGroup(effectiveRandomSettings(ctx));
+        return { config, group,
+            key: config.enabled ? JSON.stringify(['narrative', autoOracleOwner(ctx), config.longGroupId, config.sceneGroupId])
+                : JSON.stringify(['random', group.id]),
+            metadata: config.enabled ? ctx.chatMetadata : null };
+    };
 
     function status(message = '', error = false) {
         const output = $('#ari-transfer-status');
@@ -64,14 +73,16 @@ export function mountConfigTransferUI(dialog, getContext, onImport) {
         const ctx = getContext();
         const config = ctx.chatMetadata?.[SKILL_SETTINGS_KEY];
         const canExport = sourceTab === 'random' || !!(ctx.chat.length && config);
-        const group = sourceTab === 'random' ? activeGroup(effectiveRandomSettings(ctx)) : library().groups.find(item => item.id === config?.groupId);
-        sourceIdentity = sourceTab === 'random' ? group.id : ctx.chatMetadata;
-        $('#ari-export-name').value = group?.name ?? '当前技能配置';
+        const source = sourceTab === 'random' ? randomSource(ctx) : null;
+        const group = source?.group ?? library().groups.find(item => item.id === config?.groupId);
+        sourceIdentity = source ? { key: source.key, metadata: source.metadata } : ctx.chatMetadata;
+        $('#ari-export-name').value = source?.config.enabled ? '剧情配置' : group?.name ?? '当前技能配置';
         $('#ari-export-name').disabled = !canExport;
         $('#ari-export-current').disabled = !canExport;
         $('#ari-export-current-note').textContent = !canExport ? '请先打开一个聊天，再导出当前技能配置。'
             : sourceTab === 'skills' ? '导出当前聊天正在编辑的技能表，包含尚未保存到组的修改；不会更新组库。'
-                : '导出当前随机指令组，包含隐藏命令、范围表和每套骰子的开关。';
+                : source.config.enabled ? '导出当前聊天绑定的平时与场景随机指令组；文件名不会改变各配置组名称。'
+                    : '导出当前随机指令组，包含隐藏命令、范围表和每套骰子的开关。';
         resetImport(); renderLibrary(); status();
         $('.ari-tabs').hidden = true;
         $('#ari-random-panel').hidden = true;
@@ -112,9 +123,10 @@ export function mountConfigTransferUI(dialog, getContext, onImport) {
             if (sourceIdentity !== ctx.chatMetadata || !ctx.chat.length) throw new Error('当前聊天已切换，请重新打开导入 / 导出面板。');
             text = serializeConfigFile([], [{ ...ctx.chatMetadata[SKILL_SETTINGS_KEY], name }]);
         } else {
-            const group = activeGroup(effectiveRandomSettings(ctx));
-            if (group.id !== sourceIdentity) throw new Error('当前配置已切换，请重新打开导入 / 导出面板。');
-            const config = narrativeConfig(ctx);
+            const source = randomSource(ctx);
+            if (source.key !== sourceIdentity.key || source.metadata !== sourceIdentity.metadata)
+                throw new Error('当前聊天或配置已切换，请重新打开导入 / 导出面板。');
+            const { group, config } = source;
             if (config.enabled) {
                 const groups = [config.longGroupId, config.sceneGroupId].filter((id, i, ids) => id && ids.indexOf(id) === i)
                     .map(id => random().groups.find(item => item.id === id)).filter(Boolean);

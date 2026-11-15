@@ -39,7 +39,7 @@ function writePacket(variables, packet, field = SKILL_FIELD) {
 }
 
 export function installSkillService(getContext, onChange = () => {}, host = globalThis) {
-    const frames = new WeakMap();
+    let frames = new WeakMap();
     let lastError = '';
     let sheetRevision = 0;
     const settings = () => {
@@ -163,27 +163,38 @@ export function installSkillService(getContext, onChange = () => {}, host = glob
         }
         const reportWritten = narrativeOwned.some(command => commandPath(command) === REPORT_PATH && ['set', 'replace', 'insert', 'add'].includes(command.type ?? command.op));
         const reply = index >= 0 ? ctx.chat[index] : null;
-        let uid = reply?.extra?.[NARRATIVE_KEY]?.uid;
-        if (reportWritten && reply) {
-            reply.extra ??= {};
-            const data = reply.extra[NARRATIVE_KEY] ??= { uid: narrativeId(), swipes: {} };
-            uid = data.uid;
-        }
+        // Matching content does not establish an assistant update: user/direct parses
+        // must not allocate a UID and change an older reply's narrative revision.
+        const uid = reply?.extra?.[NARRATIVE_KEY]?.uid;
         frames.set(variables, { chat: ctx.chat, packet, report, reportWritten, index, content, reply, uid, swipeId: reply?.swipe_id ?? 0 });
     };
-    const beforeWrite = context => {
-        const frame = frames.get(context?.variables);
-        if (!frame) return;
-        frames.delete(context.variables);
+    const finishUpdate = variables => {
+        const frame = frames.get(variables);
+        if (!frame) return false;
         const ctx = getContext();
-        const { packet, report, reportWritten, index, content, reply, uid, swipeId } = frame;
-        if (ctx.chat !== frame.chat) return;
+        if (ctx.chat !== frame.chat) { frames.delete(variables); return false; }
+        if (frame.restored) return true;
+        frame.restored = true;
+        const { packet, report, reportWritten } = frame;
+        // Restore skills and inherited narrative state for every role. A fresh
+        // narrative report still needs the assistant message's identity/evidence checks.
+        if ((packet && !writePacket(variables, packet)) ||
+            (!reportWritten && isObject(report) && !writePacket(variables, report, REPORT_FIELD))) lastError = 'MVU 中的随机指令工作台字段不是对象，未覆盖原值。';
+        else lastError = '';
+        setTimeout(onChange, 0);
+        return true;
+    };
+    const beforeWrite = context => {
+        const variables = context?.variables;
+        const frame = frames.get(variables);
+        if (!frame || !finishUpdate(variables)) return;
+        frames.delete(variables);
+        const ctx = getContext();
+        const { report, reportWritten, index, content, reply, uid, swipeId } = frame;
         const sameReply = !!reply && ctx.chat[index] === reply && (reply.swipe_id ?? 0) === swipeId && reply.extra?.[NARRATIVE_KEY]?.uid === uid && reply.mes === content;
         const turn = sameReply ? ctx.chat.slice(0, index).findLast(message => message.is_user && !message.is_system)?.extra?.auto_random_input?.narrative : null;
         const validReport = !!(reportWritten && sameReply && turn && validateNarrativeReport(report, turn, content).valid);
-        // This event follows the card's Zod validation. Preserve all non-owned fields.
-        if ((packet && !writePacket(context.variables, packet)) || (isObject(report) && (!reportWritten || validReport) && !writePacket(context.variables, report, REPORT_FIELD))) lastError = 'MVU 中的随机指令工作台字段不是对象，未覆盖原值。';
-        else lastError = '';
+        if (validReport && !writePacket(variables, report, REPORT_FIELD)) lastError = 'MVU 中的随机指令工作台字段不是对象，未覆盖原值。';
         if (sameReply) {
             if (validReport) {
                 reply.extra ??= {};
@@ -199,8 +210,26 @@ export function installSkillService(getContext, onChange = () => {}, host = glob
         setTimeout(onChange, 0);
     };
     const events = getContext().eventSource;
+    const afterSchemaEvent = 'mag_variable_update_ended_for_zod';
     events.on('mag_command_parsed', parsed);
+    events.on(afterSchemaEvent, finishUpdate);
+    events.on('mag_variable_update_ended', variables => {
+        if (!frames.has(variables)) return;
+        // MVU emits this final barrier after schema reconciliation for ALL updates,
+        // including user messages and direct updateVariables calls. Card listeners may
+        // have registered since our extension loaded, so re-establish the order each time.
+        if (events.makeLast) events.makeLast(afterSchemaEvent, finishUpdate);
+        else if (events.removeListener) {
+            events.removeListener(afterSchemaEvent, finishUpdate);
+            events.on(afterSchemaEvent, finishUpdate);
+        }
+    });
+    // User/direct updates never reach this hook. Do not infer their role from
+    // content matching an earlier reply when attaching or clearing story history.
+    // It also restores buffers for older assistant-only MVU event sequences.
     events.on('mag_before_message_update', beforeWrite);
+    const chatChanged = getContext().eventTypes?.CHAT_CHANGED;
+    if (chatChanged) events.on(chatChanged, () => { frames = new WeakMap(); });
     return { settings, view, prepare, restore, recent,
         revision: () => {
             const { migrationSnapshot, ...config } = settings();

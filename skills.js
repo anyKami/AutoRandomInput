@@ -24,6 +24,13 @@ export const syncSkillBudget = settings => {
     return settings;
 };
 
+function selectionRevision(settings) {
+    if (typeof settings.selectionRevision === 'string' && settings.selectionRevision) return settings.selectionRevision;
+    // A deterministic migration also works before the normalized settings are persisted.
+    return typeof settings.freshSelectionSkillId === 'string' && settings.freshSelectionSkillId
+        ? `legacy:${settings.freshSelectionSkillId}` : '';
+}
+
 export function normalizeSkillSettings(value = {}) {
     value = isObject(value) ? value : {};
     const legacy = value.version !== SKILL_VERSION && (Array.isArray(value.skills) || Object.hasOwn(value, 'pointLimit'));
@@ -43,6 +50,9 @@ export function normalizeSkillSettings(value = {}) {
         pointLimitMode: legacy || value.pointLimitMode === 'auto' || !Object.hasOwn(value, 'pointLimit') ? 'auto' : 'custom',
         pointLimit: value.pointLimit,
     };
+    const revision = selectionRevision(value);
+    if (revision) config.selectionRevision = revision;
+    // Retain the old ID only to recognize requests saved before revision tokens existed.
     if (typeof value.freshSelectionSkillId === 'string' && value.freshSelectionSkillId) config.freshSelectionSkillId = value.freshSelectionSkillId;
     // Keep the original persisted sheet once. A v2 normalization never remigrates it.
     if (legacy) config.migrationSnapshot = JSON.parse(JSON.stringify(value));
@@ -123,10 +133,25 @@ export function validateSelection(value, request = {}) {
 
 export const skillPacket = variables => unwrap(unwrap(variables?.stat_data?.[SKILL_NAMESPACE])?.[SKILL_FIELD]);
 
+function hasSelectionRequest(chat, beforeId, settings) {
+    const revision = selectionRevision(settings);
+    if (!revision) return true;
+    // Oracle needs one request for the newly applied sheet. Once sent, ordinary edits
+    // or a later message without skill metadata must not restart that waiting period.
+    for (let i = Math.min(beforeId, chat.length) - 1; i >= 0; i--) {
+        const message = chat[i];
+        if (!message?.is_user || message.is_system) continue;
+        const request = message.extra?.auto_random_input?.skills?.request;
+        if (request?.selectionRevision === revision || (settings.freshSelectionSkillId &&
+            request?.skills?.some(skill => skill.id === settings.freshSelectionSkillId))) return true;
+    }
+    return false;
+}
+
 export function readSkillSelection(chat, variables, settings, beforeId = chat.length) {
     const packet = skillPacket(variables);
     const previousRequest = requestBefore(chat, beforeId);
-    if (settings.freshSelectionSkillId && !previousRequest?.skills?.some(skill => skill.id === settings.freshSelectionSkillId)) {
+    if (!hasSelectionRequest(chat, beforeId, settings)) {
         return { checks: [], issues: ['已载入新的神谕技能表，下一次发送将请求新的技能选择。'], source: null };
     }
     const request = previousRequest ?? settings;
@@ -154,6 +179,7 @@ export function createSkillTurn(settings, selection, random = Math.random, id = 
         ...rollSkill(settings.diceSides, check.modifier, check.dc, random) }));
     return {
         request: { version: SKILL_VERSION, id, diceSides: settings.diceSides, mode: settings.mode, maxChecks: settings.maxChecks,
+            ...(selectionRevision(settings) ? { selectionRevision: selectionRevision(settings) } : {}),
             skills: settings.skills.map(skill => ({ id: skill.id, name: skill.name.trim(), modifier: skill.modifier })),
             checks: results.map(({ id, skillId, name }) => ({ id, skillId, name })) },
         results,

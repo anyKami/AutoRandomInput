@@ -1,6 +1,6 @@
 import { SETTINGS_KEY, createGroup, createRule, uniqueGroupName } from './core.js';
 import { ORACLE_SETTINGS_KEY, validateGeneratedConfig } from './oracle-config.js';
-import { autoOracleState, saveAutoOracleState } from './oracle-auto-state.js';
+import { autoOracleState, reconcileAutoOracleState, saveAutoOracleState } from './oracle-auto-state.js';
 import { narrativeConfig, refreshNarrativeScene, saveNarrativeConfig } from './narrative.js';
 import { mvuApi } from './mvu-skills.js';
 
@@ -9,19 +9,35 @@ const chatKey = ctx => JSON.stringify([ctx.groupId != null ? null : ctx.characte
 
 export function installAutoOracle(getContext, service, {
     onChange = () => {}, onApply = () => {}, onChatChange = () => {},
+    isMainGenerating,
     notify = (kind, message) => globalThis.toastr?.[kind]?.(message, '自动生成随机指令'),
 } = {}) {
     let context = getContext();
+    reconcileAutoOracleState(context);
     let seen = new WeakSet(context.chat ?? []), generationType;
     let lastFloor = (context.chat?.length ?? 0) - 1;
-    let queued = false, task = null, mainBusy = false;
+    let queued = false, task = null, mainBusy = false, waitTimer;
     const sameChat = ctx => ctx.chat === getContext().chat && ctx.chatMetadata === getContext().chatMetadata
         && chatKey(ctx) === chatKey(getContext());
     const state = () => autoOracleState(getContext());
     const save = value => saveAutoOracleState(getContext(), value);
 
+    const clearWait = () => { clearTimeout(waitTimer); waitTimer = undefined; };
+    function mainIsBusy() {
+        // GENERATION_STARTED also fires for slash commands and other paths that
+        // can return without an ENDED event. Prefer the host's live state.
+        const busy = isMainGenerating?.();
+        return typeof busy === 'boolean' ? busy : mainBusy;
+    }
+    function waitForMain() {
+        if (waitTimer !== undefined || !isMainGenerating) return;
+        waitTimer = setTimeout(() => { waitTimer = undefined; void pump(); }, 250);
+        waitTimer.unref?.();
+    }
+
     function cancel(reason) {
         queued = false;
+        clearWait();
         if (!task || task.cancelled) return;
         task.cancelled = true;
         service.cancel();
@@ -29,9 +45,11 @@ export function installAutoOracle(getContext, service, {
     }
 
     async function pump() {
-        if (!queued || task || mainBusy || service.busy || !state().enabled || !getContext().chat?.length) return;
+        if (!queued || task || service.busy || !state().enabled || !getContext().chat?.length) return;
+        if (mainIsBusy()) { waitForMain(); return; }
+        clearWait();
         queued = false;
-        const ctx = getContext(), settings = state();
+        const ctx = getContext(), settings = reconcileAutoOracleState(ctx);
         // Count the next interval from this attempt, including when the API fails.
         settings.progress = 0;
         save(settings);
@@ -74,7 +92,7 @@ export function installAutoOracle(getContext, service, {
                 });
             }
             const store = ctx.extensionSettings[SETTINGS_KEY];
-            const next = state();
+            const next = reconcileAutoOracleState(ctx);
             const currentNarrative = narrativeConfig(ctx);
             if (currentNarrative.enabled && currentNarrative.scenePath) {
                 let data;
@@ -139,7 +157,13 @@ export function installAutoOracle(getContext, service, {
     const { eventSource, eventTypes } = context;
     eventSource.on(eventTypes.GENERATION_STARTED, (type, params, dryRun) => {
         // Oracle's own quiet requests must not change the main reply's generation type.
-        if (!dryRun && type !== 'quiet' && type !== 'impersonate') { generationType = type; mainBusy = true; }
+        if (!dryRun && type !== 'quiet' && type !== 'impersonate') {
+            generationType = type;
+            if (!eventTypes.GENERATION_AFTER_COMMANDS) mainBusy = true;
+        }
+    });
+    if (eventTypes.GENERATION_AFTER_COMMANDS) eventSource.on(eventTypes.GENERATION_AFTER_COMMANDS, (type, params, dryRun) => {
+        if (!dryRun && type !== 'quiet' && type !== 'impersonate') mainBusy = true;
     });
     for (const name of ['GENERATION_ENDED', 'GENERATION_STOPPED']) {
         if (eventTypes[name]) eventSource.on(eventTypes[name], () => { mainBusy = false; void pump(); });
@@ -150,6 +174,7 @@ export function installAutoOracle(getContext, service, {
     eventSource.on(eventTypes.CHAT_CHANGED, () => {
         cancel('已切换聊天，本次自动生成已取消。');
         context = getContext();
+        reconcileAutoOracleState(context);
         seen = new WeakSet(context.chat ?? []); generationType = undefined; mainBusy = false; lastFloor = (context.chat?.length ?? 0) - 1;
         onChatChange(); onChange();
     });
@@ -163,21 +188,21 @@ export function installAutoOracle(getContext, service, {
             if (!getContext().chat?.length) throw new Error('请先打开一个聊天。');
             if (!Number.isSafeInteger(interval) || interval < 1) throw new Error('生成间隔须为大于等于 1 的整数。');
             if (![1,2,3,4,5,6,7,8,9,10,20,100].includes(diceSides) || !Number.isSafeInteger(commandCount) || commandCount < 1 || commandCount > diceSides || !Number.isSafeInteger(ruleCount) || ruleCount < 1 || ruleCount > 10 || !['first', 'even'].includes(mapping)) throw new Error('骰子数量须为 1 到 10，指令条数须为 1 到骰子面数。');
-            const next = state();
+            const next = reconcileAutoOracleState(getContext());
             Object.assign(next, { enabled: true, interval, prompt, commandCount, ruleCount, diceSides, mapping, progress: 0 });
             save(next); seen = new WeakSet(getContext().chat); lastFloor = getContext().chat.length - 1; queued = true;
             onChange(); return pump();
         },
         stop() {
-            const next = state(); next.enabled = false; save(next);
+            const next = reconcileAutoOracleState(getContext()); next.enabled = false; save(next);
             cancel('自动生成已关闭，本次请求已取消，已有配置保留。');
             onChange();
         },
         update({ interval, prompt, commandCount = state().commandCount, ruleCount = state().ruleCount, diceSides = state().diceSides, mapping = state().mapping }) {
             if (!Number.isSafeInteger(interval) || interval < 1) throw new Error('生成间隔须为大于等于 1 的整数。');
             if (![1,2,3,4,5,6,7,8,9,10,20,100].includes(diceSides) || !Number.isSafeInteger(commandCount) || commandCount < 1 || commandCount > diceSides || !Number.isSafeInteger(ruleCount) || ruleCount < 1 || ruleCount > 10 || !['first', 'even'].includes(mapping)) throw new Error('骰子数量须为 1 到 10，指令条数须为 1 到骰子面数。');
-            const next = state();
-            if (next.interval !== interval) { next.progress = 0; queued = false; }
+            const next = reconcileAutoOracleState(getContext());
+            if (next.interval !== interval) { next.progress = 0; queued = false; clearWait(); }
             Object.assign(next, { interval, prompt, commandCount, ruleCount, diceSides, mapping }); save(next); onChange();
         },
     };

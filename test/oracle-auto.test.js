@@ -4,7 +4,7 @@ import { SETTINGS_KEY, activeGroup, createRollRecord, normalizeSettings } from '
 import { SKILL_GROUPS_KEY, normalizeSkillGroups } from '../skill-groups.js';
 import { ORACLE_SETTINGS_KEY, normalizeOracleSettings } from '../oracle-config.js';
 import { createOracleRequestGate, createOracleService } from '../oracle-service.js';
-import { AUTO_ORACLE_KEY, effectiveRandomSettings, normalizeAutoOracle, selectRandomGroup } from '../oracle-auto-state.js';
+import { AUTO_ORACLE_KEY, autoOracleOwner, effectiveRandomSettings, normalizeAutoOracle, reconcileAutoOracleState, selectRandomGroup } from '../oracle-auto-state.js';
 import { installAutoOracle } from '../oracle-auto.js';
 import { parseConfigFile, serializeConfigFile } from '../config-transfer.js';
 
@@ -24,7 +24,7 @@ function autoBundle({ diceSides = 20, commandCount = 10, ruleCount = 3, command 
 const tick = () => new Promise(resolve => setImmediate(resolve));
 const deferred = () => { let resolve; const promise = new Promise(done => { resolve = done; }); return { promise, resolve }; };
 
-function fixture({ saved, fallbackEvent = false, run = async messages => JSON.stringify(
+function fixture({ saved, fallbackEvent = false, afterCommands = false, hostState, run = async messages => JSON.stringify(
     messages[0].content.includes('本次每套骰子') ? autoBundle() : bundle(),
 ) } = {}) {
     const listeners = new Map(), notices = [], requests = [];
@@ -35,7 +35,8 @@ function fixture({ saved, fallbackEvent = false, run = async messages => JSON.st
         chat: [reply('历史开场白')], chatMetadata: saved ? { [AUTO_ORACLE_KEY]: structuredClone(saved) } : {},
         extensionSettings: { [SETTINGS_KEY]: store, [SKILL_GROUPS_KEY]: normalizeSkillGroups(), [ORACLE_SETTINGS_KEY]: normalizeOracleSettings() },
         eventTypes: { GENERATION_STARTED: 'start', GENERATION_ENDED: 'end', GENERATION_STOPPED: 'stop', MESSAGE_RECEIVED: 'received', MESSAGE_SENT: 'sent', CHAT_CHANGED: 'chat',
-            ...(fallbackEvent ? {} : { CHARACTER_MESSAGE_RENDERED: 'rendered' }) },
+            ...(fallbackEvent ? {} : { CHARACTER_MESSAGE_RENDERED: 'rendered' }),
+            ...(afterCommands ? { GENERATION_AFTER_COMMANDS: 'after-commands' } : {}) },
         eventSource: {
             on(name, fn) { const handlers = listeners.get(name) ?? []; handlers.push(fn); listeners.set(name, handlers); },
             async emit(name, ...args) { for (const fn of listeners.get(name) ?? []) await fn(...args); },
@@ -53,7 +54,10 @@ function fixture({ saved, fallbackEvent = false, run = async messages => JSON.st
     const getContext = () => ({ ...ctx });
     const automatic = createOracleService(getContext, skills, host, { gate, automatic: true });
     const manual = createOracleService(getContext, skills, host, { gate });
-    const controller = installAutoOracle(getContext, automatic, { notify: (kind, message) => notices.push({ kind, message }) });
+    const controller = installAutoOracle(getContext, automatic, {
+        notify: (kind, message) => notices.push({ kind, message }),
+        ...(hostState ? { isMainGenerating: () => hostState.generating } : {}),
+    });
     const emit = (name, ...args) => ctx.eventSource.emit(ctx.eventTypes[name] ?? name, ...args);
     return { ctx, store, api, host, gate, manual, automatic, controller, requests, notices, emit,
         setRun(next) { run = next; },
@@ -399,6 +403,162 @@ test('automatic requests serialize and coalesce multiple elapsed intervals into 
     assert.equal(h.store.groups.length, 2);
 });
 
+for (const groupId of [null, 'group']) test(`a ${groupId ? 'group' : 'character'} chat branch owns a copy before its first edit or automatic update`, async () => {
+    const h = fixture();
+    h.ctx.groupId = groupId;
+    h.ctx.chatMetadata.integrity = 'parent-integrity';
+    await h.start(1);
+    const parent = { chat: h.ctx.chat, metadata: h.ctx.chatMetadata };
+    const parentId = h.controller.state().groupId;
+    const original = structuredClone(h.store.groups.find(group => group.id === parentId));
+    const branchMetadata = { ...structuredClone(parent.metadata), main_chat: h.ctx.chatId, integrity: 'branch-integrity' };
+    const branch = { ...h.ctx, chatId: '聊天甲 - Branch #1', chatMetadata: branchMetadata };
+    const before = JSON.stringify({ store: h.store, metadata: branchMetadata });
+    assert.equal(effectiveRandomSettings(branch), h.store, 'a copied owner cannot select its source group before reconciliation');
+    assert.equal(JSON.stringify({ store: h.store, metadata: branchMetadata }), before, 'reading/exporting settings is side-effect free');
+
+    await h.switchChat(branch.chatId, structuredClone(parent.chat), branchMetadata);
+    const branchId = h.controller.state().groupId;
+    const copied = activeGroup(effectiveRandomSettings(h.ctx));
+    assert.notEqual(branchId, parentId);
+    assert.equal(h.controller.state().ownerKey, autoOracleOwner(h.ctx));
+    assert.equal(h.requests.length, 1, 'entering the branch makes no model request');
+    assert.deepEqual(copied.rules.map(({ id, ...rule }) => rule), original.rules.map(({ id, ...rule }) => rule));
+    copied.rules[0].commands[0] = '分支中的手工修改';
+    assert.deepEqual(h.store.groups.find(group => group.id === parentId), original, 'editing the selected branch group preserves its parent');
+    h.setRun(async () => JSON.stringify(autoBundle({ command: '分支剧情的新指令' })));
+    await h.send(); await h.receive();
+    assert.equal(h.requests.length, 2);
+    assert.equal(h.controller.state().groupId, branchId);
+    assert.equal(activeGroup(effectiveRandomSettings(h.ctx)).rules[0].commands[0], '分支剧情的新指令');
+    assert.deepEqual(h.store.groups.find(group => group.id === parentId), original);
+
+    await h.switchChat('聊天甲', parent.chat, parent.metadata);
+    assert.equal(activeGroup(effectiveRandomSettings(h.ctx)).id, parentId);
+    assert.equal(h.store.groups.length, 3);
+});
+
+test('legacy ownerless groups are copied once, preserving options and leaving the original intact even when a branch migrates first', async () => {
+    const h = fixture();
+    h.ctx.chatMetadata.integrity = 'legacy-parent';
+    await h.start(5, '保留提示词'); await h.receive();
+    const parent = { chat: h.ctx.chat, metadata: h.ctx.chatMetadata };
+    delete parent.metadata[AUTO_ORACLE_KEY].ownerKey;
+    const originalId = h.controller.state().groupId;
+    const original = structuredClone(h.store.groups.find(group => group.id === originalId));
+    const branchMetadata = { ...structuredClone(parent.metadata), integrity: 'legacy-branch' };
+    await h.switchChat('旧聊天的分支', structuredClone(parent.chat), branchMetadata);
+    const branchId = h.controller.state().groupId;
+    assert.notEqual(branchId, originalId);
+    assert.equal(h.controller.state().progress, 1);
+    assert.equal(h.controller.state().prompt, '保留提示词');
+    assert.equal(h.controller.state().enabled, true);
+    assert.equal(h.requests.length, 1);
+    const migrated = structuredClone(h.ctx.chatMetadata);
+    await h.switchChat('旧聊天的分支', structuredClone(h.ctx.chat), migrated);
+    assert.equal(h.controller.state().groupId, branchId, 'reloading does not migrate again');
+    assert.equal(h.store.groups.length, 3);
+
+    await h.switchChat('聊天甲', parent.chat, parent.metadata);
+    const parentId = h.controller.state().groupId;
+    assert.notEqual(parentId, originalId);
+    assert.notEqual(parentId, branchId);
+    assert.equal(h.store.groups.length, 4);
+    assert.deepEqual(h.store.groups.find(group => group.id === originalId), original);
+});
+
+test('chat renames and group speaker changes preserve an integrity-owned group', async () => {
+    const h = fixture();
+    h.ctx.groupId = 'group'; h.ctx.chatMetadata.integrity = 'stable-integrity';
+    await h.start();
+    const id = h.controller.state().groupId, count = h.store.groups.length;
+    h.ctx.characterId = 99;
+    await h.switchChat('重命名的聊天', structuredClone(h.ctx.chat), structuredClone(h.ctx.chatMetadata));
+    assert.equal(h.controller.state().groupId, id);
+    assert.equal(h.store.groups.length, count);
+    assert.equal(activeGroup(effectiveRandomSettings(h.ctx)).id, id);
+});
+
+test('hosts without integrity use the chat identity to separate branches, and a missing source group is detached safely', async () => {
+    const h = fixture(); await h.start();
+    const sourceId = h.controller.state().groupId;
+    const copiedMetadata = structuredClone(h.ctx.chatMetadata);
+    await h.switchChat('另一分支', structuredClone(h.ctx.chat), copiedMetadata);
+    assert.notEqual(h.controller.state().groupId, sourceId);
+    const orphan = { ...h.ctx, chatId: '缺失组的分支', chatMetadata: {
+        [AUTO_ORACLE_KEY]: { ...h.controller.state(), groupId: 'deleted-group', useGroup: true },
+    } };
+    const before = h.store.groups.length;
+    const state = reconcileAutoOracleState(orphan);
+    assert.equal(state.groupId, null); assert.equal(state.useGroup, false);
+    assert.equal(state.ownerKey, autoOracleOwner(orphan));
+    assert.equal(h.store.groups.length, before);
+});
+
+for (const hostState of [undefined, { generating: false }]) test(`a pure slash command cannot block enabling auto generation ${hostState ? 'with a live host state' : 'with the after-commands event fallback'}`, async () => {
+    const h = fixture({ afterCommands: true, hostState });
+    await h.emit('GENERATION_STARTED', 'normal', {}, false);
+    // ST returns after executing the slash command: no AFTER_COMMANDS or ENDED.
+    await h.start();
+    assert.equal(h.requests.length, 1);
+    assert.equal(h.controller.pending, false);
+    h.controller.stop();
+    await h.emit('GENERATION_STARTED', 'normal', {}, false);
+    await h.start();
+    assert.equal(h.requests.length, 2);
+});
+
+test('a pre-model early return after commands does not leave a stale busy flag', async () => {
+    const hostState = { generating: false }, h = fixture({ afterCommands: true, hostState });
+    await h.emit('GENERATION_STARTED', 'normal', {}, false);
+    await h.emit('GENERATION_AFTER_COMMANDS', 'normal', {}, false);
+    // A disconnected backend can return without showing the stop button/ENDED.
+    await h.start();
+    assert.equal(h.requests.length, 1);
+    assert.equal(h.controller.pending, false);
+});
+
+test('an already queued update resumes when the host becomes idle without emitting ENDED', async t => {
+    t.mock.timers.enable({ apis: ['setTimeout'] });
+    const hostState = { generating: true }, h = fixture({ afterCommands: true, hostState });
+    await h.emit('GENERATION_STARTED', 'normal', {}, false);
+    await h.emit('GENERATION_AFTER_COMMANDS', 'normal', {}, false);
+    await h.start();
+    assert.equal(h.requests.length, 0); assert.equal(h.controller.pending, true);
+    t.mock.timers.tick(250); await tick();
+    assert.equal(h.requests.length, 0, 'a running main generation still holds the queue');
+    hostState.generating = false;
+    t.mock.timers.tick(250); await tick();
+    assert.equal(h.requests.length, 1); assert.equal(h.controller.pending, false);
+    t.mock.timers.tick(1000); await tick();
+    assert.equal(h.requests.length, 1, 'dispatch clears the waiting timer');
+});
+
+test('a group member ENDED event cannot release the queue while the host group is still generating', async t => {
+    t.mock.timers.enable({ apis: ['setTimeout'] });
+    const hostState = { generating: true }, h = fixture({ hostState }); h.ctx.groupId = 'group';
+    await h.emit('GENERATION_STARTED', 'normal', {}, false);
+    await h.start();
+    await h.emit('GENERATION_ENDED'); await tick();
+    assert.equal(h.requests.length, 0); assert.equal(h.controller.pending, true);
+    hostState.generating = false;
+    t.mock.timers.tick(250); await tick();
+    assert.equal(h.requests.length, 1);
+});
+
+for (const action of ['stop', 'switch', 'interval']) test(`${action} clears a queued host-state recheck`, async t => {
+    t.mock.timers.enable({ apis: ['setTimeout'] });
+    const hostState = { generating: true }, h = fixture({ hostState });
+    await h.start(); assert.equal(h.controller.pending, true);
+    if (action === 'stop') h.controller.stop();
+    else if (action === 'switch') await h.switchChat('另一聊天');
+    else h.controller.update({ interval: 3, prompt: '' });
+    hostState.generating = false;
+    t.mock.timers.tick(1000); await tick();
+    assert.equal(h.controller.pending, false);
+    assert.equal(h.requests.length, 0);
+});
+
 test('a delayed oracle response cannot replace candidates when the selected scene changes', async () => {
     const response = deferred();
     const h = fixture({ run: () => response.promise });
@@ -454,4 +614,116 @@ test('oracle initializes the MVU scene on first request and drops a response aft
         else assert.equal(scene.sceneGroupRevision, scene.sceneRevision);
         assert.equal(h.requests.length, 1);
     }
+});
+
+test('branch ownership also isolates the narrative automatic scene layer without changing its long layer or preferences', async () => {
+    const { NARRATIVE_KEY } = await import('../narrative.js');
+    const h = fixture(); h.ctx.chatMetadata.integrity = 'narrative-parent';
+    const longGroupId = h.store.groups[0].id;
+    h.ctx.chatMetadata[NARRATIVE_KEY] = { enabled: true, longGroupId,
+        preferences: '多一点日常', topicPreferences: { daily: 'prefer' }, blockedTopics: { conflict: 3 } };
+    h.setRun(async () => {
+        const value = autoBundle(); value.formatVersion = 2;
+        value.randomGroups[0].rules[0].commandMetadata = [{ effect: 'detail', topic: 'daily', conditions: [{ type: 'label', value: '室内' }] }];
+        return JSON.stringify(value);
+    });
+    await h.start(1);
+    const parent = { chat: h.ctx.chat, metadata: h.ctx.chatMetadata };
+    const original = structuredClone(h.store.groups.find(group => group.id === h.controller.state().groupId));
+    const metadata = { ...structuredClone(parent.metadata), integrity: 'narrative-branch' };
+    await h.switchChat('剧情分支', structuredClone(parent.chat), metadata);
+    const config = h.ctx.chatMetadata[NARRATIVE_KEY], id = config.sceneGroupId;
+    assert.notEqual(id, original.id);
+    assert.equal(h.controller.state().groupId, id);
+    assert.equal(config.longGroupId, longGroupId);
+    assert.equal(config.preferences, '多一点日常');
+    assert.deepEqual(config.topicPreferences, { daily: 'prefer' });
+    assert.deepEqual(config.blockedTopics, { conflict: 3 });
+    assert.equal(config.sceneGroupRevision, config.sceneRevision);
+    assert.equal(h.store.groups.length, 3, 'the auto group and scene binding share one copy');
+    const branchGroup = h.store.groups.find(group => group.id === id);
+    branchGroup.rules[0].commandMetadata[0].conditions[0].value = '室外';
+    assert.deepEqual(h.store.groups.find(group => group.id === original.id), original);
+    h.setRun(async () => JSON.stringify(autoBundle({ command: '只适合分支的新指令' })));
+    await h.send(); await h.receive();
+    assert.equal(h.ctx.chatMetadata[NARRATIVE_KEY].sceneGroupId, id);
+    assert.equal(h.store.groups.find(group => group.id === id).rules[0].commands[0], '只适合分支的新指令');
+    assert.deepEqual(h.store.groups.find(group => group.id === original.id), original);
+    assert.equal(parent.metadata[NARRATIVE_KEY].sceneGroupId, original.id);
+});
+
+for (const legacy of [false, true]) test(`${legacy ? 'an ownerless legacy' : 'a copied'} automatic state isolates a scene group rebound after its previous automatic update`, async () => {
+    const { NARRATIVE_KEY } = await import('../narrative.js');
+    const { createGroup } = await import('../core.js');
+    const h = fixture(); h.ctx.chatMetadata.integrity = 'parent';
+    await h.start();
+    const automaticId = h.controller.state().groupId;
+    const scene = createGroup('用户重新绑定的场景'); h.store.groups.push(scene);
+    h.ctx.chatMetadata[NARRATIVE_KEY] = { enabled: true, longGroupId: h.store.groups[0].id,
+        sceneGroupId: scene.id, sceneRevision: 'scene', sceneGroupRevision: 'scene', preferences: '保留新偏好' };
+    if (legacy) delete h.ctx.chatMetadata[AUTO_ORACLE_KEY].ownerKey;
+    const original = structuredClone(scene);
+    const branch = { ...structuredClone(h.ctx.chatMetadata), integrity: 'branch' };
+    await h.switchChat('已重新绑定场景的分支', structuredClone(h.ctx.chat), branch);
+    const branchSceneId = h.ctx.chatMetadata[NARRATIVE_KEY].sceneGroupId;
+    assert.notEqual(h.controller.state().groupId, automaticId);
+    assert.notEqual(branchSceneId, scene.id);
+    assert.equal(h.ctx.chatMetadata[NARRATIVE_KEY].preferences, '保留新偏好');
+    await h.start();
+    assert.equal(h.controller.state().groupId, branchSceneId);
+    assert.deepEqual(h.store.groups.find(group => group.id === scene.id), original);
+});
+
+test('owner migration does not create duplicate groups when the automatic and scene references are missing', async () => {
+    const { NARRATIVE_KEY } = await import('../narrative.js');
+    const h = fixture(); await h.start();
+    const metadata = structuredClone(h.ctx.chatMetadata);
+    delete metadata[AUTO_ORACLE_KEY].ownerKey;
+    metadata[AUTO_ORACLE_KEY].groupId = 'missing-auto';
+    metadata[NARRATIVE_KEY] = { enabled: true, longGroupId: h.store.groups[0].id, sceneGroupId: 'missing-scene', preferences: '保留' };
+    const before = JSON.stringify(h.store.groups);
+    await h.switchChat('缺失组的旧分支', structuredClone(h.ctx.chat), metadata);
+    assert.equal(JSON.stringify(h.store.groups), before);
+    assert.equal(h.controller.state().groupId, null);
+    assert.equal(h.ctx.chatMetadata[NARRATIVE_KEY].sceneGroupId, 'missing-scene');
+    assert.equal(h.ctx.chatMetadata[NARRATIVE_KEY].preferences, '保留');
+    const groupCount = h.store.groups.length;
+    await h.start();
+    assert.equal(h.store.groups.length, groupCount + 1);
+    assert.equal(h.ctx.chatMetadata[NARRATIVE_KEY].sceneGroupId, h.controller.state().groupId);
+});
+
+test('an automatic narrative result preserves preferences and automatic parameters edited while it was running', async () => {
+    const { NARRATIVE_KEY } = await import('../narrative.js');
+    const response = deferred(), h = fixture({ run: () => response.promise });
+    h.ctx.chatMetadata[NARRATIVE_KEY] = { enabled: true, preferences: '旧偏好' };
+    const pending = h.start(5); await tick();
+    h.ctx.chatMetadata[NARRATIVE_KEY].preferences = '新的用户偏好';
+    h.ctx.chatMetadata[NARRATIVE_KEY].topicPreferences = { conflict: 'reduce' };
+    h.ctx.chatMetadata[NARRATIVE_KEY].eventBudget = 0;
+    h.controller.update({ interval: 5, prompt: '下一次自动要求', diceSides: 100, commandCount: 2, ruleCount: 1, mapping: 'even' });
+    response.resolve(JSON.stringify(autoBundle())); await pending;
+    const narrative = h.ctx.chatMetadata[NARRATIVE_KEY], automatic = h.controller.state();
+    assert.ok(narrative.sceneGroupId);
+    assert.equal(narrative.preferences, '新的用户偏好');
+    assert.deepEqual(narrative.topicPreferences, { conflict: 'reduce' });
+    assert.equal(narrative.eventBudget, 0);
+    assert.equal(automatic.prompt, '下一次自动要求');
+    assert.equal(automatic.diceSides, 100); assert.equal(automatic.mapping, 'even');
+    assert.equal(automatic.commandCount, 2); assert.equal(automatic.ruleCount, 1);
+    assert.equal(h.store.groups.find(group => group.id === narrative.sceneGroupId).rules[0].diceSides, 20, 'the in-flight response still uses its original parameter snapshot');
+});
+
+for (const key of ['sceneGroupId', 'longGroupId']) test(`rebinding ${key} while a narrative request is pending retains the user's new choice`, async () => {
+    const { NARRATIVE_KEY } = await import('../narrative.js');
+    const { createGroup } = await import('../core.js');
+    const response = deferred(), h = fixture({ run: () => response.promise });
+    const scene = createGroup('原场景'), selected = createGroup('用户新选组'); h.store.groups.push(scene, selected);
+    h.ctx.chatMetadata[NARRATIVE_KEY] = { enabled: true, longGroupId: h.store.groups[0].id, sceneGroupId: scene.id };
+    const before = JSON.stringify(h.store.groups);
+    const pending = h.start(); await tick();
+    h.ctx.chatMetadata[NARRATIVE_KEY][key] = selected.id;
+    response.resolve(JSON.stringify(autoBundle())); await pending;
+    assert.equal(h.ctx.chatMetadata[NARRATIVE_KEY][key], selected.id);
+    assert.equal(JSON.stringify(h.store.groups), before);
 });

@@ -82,6 +82,34 @@ test('edits, swipes, dice, renamed/deleted skills, old IDs and absent provenance
     assert.equal(readSkillSelection(chat, data, config()).checks[0].dc, 10);
 });
 
+test('persisted skill-ID gates migrate stably and recognize an already sent legacy request', () => {
+    const { chat, data } = fixture();
+    let current = config({ freshSelectionSkillId: 'lock', skills: skills.slice(1) });
+    assert.equal(current.selectionRevision, 'legacy:lock');
+    current = normalizeSkillSettings(JSON.parse(JSON.stringify(current)));
+    assert.equal(current.selectionRevision, 'legacy:lock');
+    assert.equal(readSkillSelection(chat, data, current).checks.length, 1);
+    chat.push({ is_user: true, mes: '普通消息，没有技能元数据' }, { mes: '继续剧情' });
+    assert.equal(readSkillSelection(chat, data, current).checks.length, 1);
+    // Requests after the inspected history boundary must not open an earlier gate.
+    assert.equal(readSkillSelection(chat, data, current, 0).checks.length, 0);
+});
+
+test('an orphaned persisted skill-ID gate recovers after one request even when that skill no longer exists', () => {
+    const { data } = fixture();
+    const chat = [];
+    let current = config({ freshSelectionSkillId: 'deleted-before-upgrade' });
+    const revision = current.selectionRevision;
+    for (let round = 0; round < 4; round++) {
+        current = normalizeSkillSettings(JSON.parse(JSON.stringify(current)));
+        assert.equal(current.selectionRevision, revision);
+        const selection = readSkillSelection(chat, data, current);
+        assert.equal(selection.checks.length, round === 0 ? 0 : 1, `round ${round + 1}`);
+        const turn = createSkillTurn(current, selection, () => 0.5);
+        chat.push({ is_user: true, extra: { auto_random_input: { skills: turn } } }, { mes: '新的技能选择' });
+    }
+});
+
 test('mixed outcomes remain snapshots and the prompt follows free use without applicability restrictions', () => {
     const { chat, data } = fixture();
     const cfg = config({ maxChecks: 3 });

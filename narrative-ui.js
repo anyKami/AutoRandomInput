@@ -11,15 +11,35 @@ export function mountMetadataEditor(container, getMeta, setMeta, { persistentAll
         const wrapper = document.createElement('label'); wrapper.textContent = label;
         const input = document.createElement('select'); input.setAttribute('aria-label', label); values.forEach(([value, text]) => input.append(new Option(text, value)));
         input.value = current; input.addEventListener('change', () => changed(input.value)); wrapper.append(input); row.append(wrapper);
+        return input;
     };
-    const save = () => setMeta(structuredClone(meta));
+    // Portable files do not distinguish a removed top-level link from a removed
+    // condition link. Ask explicitly; never turn a condition into an active-thread gate.
+    let associationChosen = !meta.needsBinding;
+    const warning = document.createElement('p');
+    warning.textContent = '此指令需要重新确认剧情线绑定：在“剧情线”选择“无关联”或具体剧情线，并分别选择每个剧情线条件的目标后才能触发。';
+    warning.hidden = !meta.needsBinding;
+    const save = () => {
+        const missingCondition = meta.conditions.some(condition => condition?.type === 'thread' &&
+            !(typeof condition.threadId === 'string' && condition.threadId.trim()));
+        if (!associationChosen || missingCondition) meta.needsBinding = true;
+        else delete meta.needsBinding;
+        warning.hidden = !meta.needsBinding;
+        setMeta(structuredClone(meta));
+    };
     select('效果', [['event','剧情推动'],['detail','氛围描写']], meta.effect, value => { meta.effect = value; save(); });
     select('主题', NARRATIVE_TOPICS.map(topic => [topic, TOPIC_LABELS[topic]]), meta.topic, value => { meta.topic = value; save(); });
     const threads = getThreads();
-    select('剧情线', [['','无关联'], ...threads.map(thread => [thread.id, thread.title])], meta.threadId ?? '', value => {
-        if (value) { meta.threadId = value; meta.conditions = meta.conditions.map(condition => condition?.type === 'thread' && !condition.threadId ? { ...condition, threadId: value } : condition); delete meta.needsBinding; } else delete meta.threadId; save();
+    const pendingBinding = '__ari_pending_binding__';
+    const association = select('剧情线', [...(associationChosen ? [] : [[pendingBinding, '请选择关联方式']]),
+        ['','无关联'], ...threads.map(thread => [thread.id, thread.title])], associationChosen ? meta.threadId ?? '' : pendingBinding, value => {
+        if (value === pendingBinding) return;
+        associationChosen = true;
+        if (value) meta.threadId = value; else delete meta.threadId;
+        save();
     });
-    if (meta.needsBinding) { const warning = document.createElement('p'); warning.textContent = '此指令需要重新绑定剧情线后才能触发。'; details.append(warning); }
+    if (!associationChosen) association.children[0].disabled = true;
+    details.append(warning);
     if (persistentAllowed) {
         const label = document.createElement('label'), checkbox = document.createElement('input'); checkbox.type = 'checkbox'; checkbox.checked = meta.persistent === true;
         checkbox.addEventListener('change', () => { meta.persistent = checkbox.checked; save(); }); label.append(checkbox, ' 显式常驻（不占预算）'); details.append(label);
