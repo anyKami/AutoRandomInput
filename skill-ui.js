@@ -1,5 +1,5 @@
 import { SKILL_SETTINGS_KEY, defaultSkillModifier, minSkillModifier, newSkillId, normalizeSkillSettings, randomizeSkillModifiers,
-    recommendedPointLimit, skillErrors, skillPointTotal, syncSkillBudget, skillFormula, SKILL_VERSION } from './skills.js';
+    recommendedPointLimit, skillErrors, skillPointTotal, syncSkillBudget, skillFormula, skillOutcome, skillDcOffset, signedModifier, SKILL_VERSION } from './skills.js';
 import { SKILL_GROUPS_KEY, SKILL_TEMPLATES, addSkillTemplate, createSkillGroup, loadSkillGroup, saveSkillGroup,
     skillGroupMatches, uniqueSkillGroupName } from './skill-groups.js';
 
@@ -108,18 +108,59 @@ export function mountSkillUI(dialog, getContext, service) {
             container.append(row);
         }
     }
+    function renderStatistics(config) {
+        const container = $('#ari-skill-statistics');
+        const items = service.statistics();
+        const byId = new Map(items.filter(item => item.skillId).map(item => [item.skillId, item]));
+        const activeIds = new Set(config.skills.map(skill => skill.id));
+        const rows = [
+            ...config.skills.map(skill => byId.get(skill.id) ?? { skillId: skill.id, name: skill.name, uses: 0, adopted: 0,
+                successRate: null, longestFailureStreak: 0, currentFailureStreak: 0 }),
+            ...items.filter(item => !activeIds.has(item.skillId)),
+        ];
+        container.replaceChildren();
+        if (!rows.length) { container.textContent = '暂无技能，请先配置技能表。'; return; }
+        const table = document.createElement('table');
+        table.className = 'ari-skill-stats-table';
+        const headings = ['技能', '使用', '采用', '成功率', '最长连败', '当前连败'];
+        const thead = document.createElement('thead');
+        const header = document.createElement('tr');
+        for (const label of headings) {
+            const th = document.createElement('th'); th.textContent = label; th.scope = 'col'; header.append(th);
+        }
+        thead.append(header); table.append(thead);
+        const tbody = document.createElement('tbody');
+        for (const item of rows) {
+            const tr = document.createElement('tr');
+            const values = [item.name || '未命名技能', item.uses ?? 0, item.adopted ?? 0,
+                item.successRate == null ? '—' : `${Number(item.successRate.toFixed(1))}%`,
+                item.longestFailureStreak ?? 0, item.currentFailureStreak ?? 0];
+            for (const [index, value] of values.entries()) {
+                const cell = document.createElement(index === 0 ? 'th' : 'td');
+                cell.textContent = String(value);
+                if (index === 0) cell.scope = 'row';
+                tr.append(cell);
+            }
+            tbody.append(tr);
+        }
+        table.append(tbody); container.append(table);
+    }
     function refresh() {
         if (metadata !== getContext().chatMetadata) { render(); return; }
         const state = service.view();
         const config = syncSkillBudget(store() ?? state.config);
         renderGroups();
         $('#ari-skills-enabled').checked = config.enabled;
+        $('#ari-skills-difficulty').value = config.difficulty;
+        $('#ari-skills-criticals').checked = config.criticalEnabled;
+        const dcOffset = skillDcOffset(config.diceSides, config.difficulty);
+        $('#ari-skills-difficulty-note').textContent = `当前 d${config.diceSides} 难度偏移：${signedModifier(dcOffset)} DC。AI 仍按普通难度给出原始 DC；仅影响下一次新投骰。`;
         $('#ari-skills-enabled-label').textContent = config.enabled ? '技能检定已开启' : '技能检定已关闭';
         $('#ari-skills-status').textContent = !canEdit() ? '请先打开一个聊天，再配置主角技能。'
             : state.error || (!state.ready ? '等待 MVU 初始化当前聊天变量。' : '已连接 MVU · 技能表仅用于当前聊天');
         $('#ari-skills-errors').textContent = skillErrors(config).join('\n');
         $('#ari-skills-errors').hidden = !skillErrors(config).length;
-        $('#ari-skill-range').textContent = `加值范围 ${minSkillModifier(config.diceSides)}～+${config.diceSides}；骰点＋加值 ≥ DC 为通过，相等通过。`;
+        $('#ari-skill-range').textContent = `加值范围 ${minSkillModifier(config.diceSides)}～+${config.diceSides}；骰点＋加值 ≥ 最终DC 为通过。${config.criticalEnabled ? '自然1／最大点强制覆盖普通成败。' : '不启用自然极值特例。'}`;
         $('#ari-skill-migration-note').hidden = !config.migrationSnapshot;
         const total = skillPointTotal(config);
         const validLimit = Number.isSafeInteger(config.pointLimit) && config.pointLimit >= 0;
@@ -130,7 +171,7 @@ export function mountSkillUI(dialog, getContext, service) {
         if (config.pointLimitMode === 'auto') $('#ari-skill-point-limit').value = config.pointLimit;
         $('#ari-randomize-skills').disabled = !canEdit() || !config.skills.length || !validLimit;
         $('#ari-skill-pending-note').textContent = state.selection.issues.join('\n');
-        renderList($('#ari-skill-pending'), state.selection.checks.map(check => ({ title: `${check.name} · DC ${check.dc}`,
+        renderList($('#ari-skill-pending'), state.selection.checks.map(check => ({ title: `${check.name} · DC ${check.dc}${dcOffset ? ` → ${check.dc + dcOffset}` : ''}`,
             detail: `${check.action}\n条件：${check.conditions}` })), '暂无待检定技能');
         const chat = getContext().chat;
         const latestTurn = chat.findLast(message => message.is_user && message.extra?.auto_random_input?.skills)?.extra.auto_random_input.skills;
@@ -141,12 +182,13 @@ export function mountSkillUI(dialog, getContext, service) {
             const adopted = report?.处理 === '采用检定';
             const status = legacy ? '旧版历史结果' : adopted ? '已采用' : report ? report.处理 : '未确认';
             return {
-                title: `${result.name} · 候选${result.passed ? '通过' : '失败'} · ${status}`,
+                title: `${result.name} · 候选${skillOutcome(result)} · ${status}`,
                 passed: adopted ? result.passed : undefined,
                 detail: `${result.action}\n${legacy ? `d${result.sides} = ${result.result}，旧技能值 ${result.value}` : `${skillFormula(result)}\n条件：${result.conditions}`}\n${report?.说明 ?? ''}`,
             };
         }), '尚无检定结果');
         $('#ari-skill-last-note').textContent = [...(latestTurn?.issues ?? []), ...recent.issues].join('\n');
+        renderStatistics(config);
     }
     function renderRows() {
         const config = store() ?? normalizeSkillSettings();
@@ -178,6 +220,8 @@ export function mountSkillUI(dialog, getContext, service) {
         const config = store() ?? normalizeSkillSettings();
         for (const input of $('#ari-skills-panel').querySelectorAll('input, select, button')) input.disabled = !canEdit();
         $('#ari-skills-dice').value = String(config.diceSides);
+        $('#ari-skills-difficulty').value = config.difficulty;
+        $('#ari-skills-criticals').checked = config.criticalEnabled;
         $('#ari-skills-mode').value = config.mode;
         $('#ari-skills-max').value = String(config.maxChecks);
         $('#ari-skill-point-limit').value = config.pointLimit ?? '';
@@ -214,6 +258,8 @@ export function mountSkillUI(dialog, getContext, service) {
     $('#ari-skills-dice').addEventListener('change', event => { store().diceSides = Number(event.target.value); save(); renderRows(); refresh(); });
     $('#ari-skills-mode').addEventListener('change', event => { store().mode = event.target.value; save(); refresh(); });
     $('#ari-skills-max').addEventListener('change', event => { store().maxChecks = Number(event.target.value); save(); refresh(); });
+    $('#ari-skills-difficulty').addEventListener('change', event => { store().difficulty = event.target.value; save(); refresh(); });
+    $('#ari-skills-criticals').addEventListener('change', event => { store().criticalEnabled = event.target.checked; save(); refresh(); });
     $('#ari-skill-point-limit').addEventListener('input', event => {
         if (!isCurrent()) return;
         store().pointLimitMode = 'custom';
