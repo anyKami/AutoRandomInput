@@ -114,8 +114,8 @@ export function mountSkillUI(dialog, getContext, service) {
         const byId = new Map(items.filter(item => item.skillId).map(item => [item.skillId, item]));
         const activeIds = new Set(config.skills.map(skill => skill.id));
         const rows = [
-            ...config.skills.map(skill => byId.get(skill.id) ?? { skillId: skill.id, name: skill.name, uses: 0, adopted: 0,
-                successRate: null, longestFailureStreak: 0, currentFailureStreak: 0 }),
+            ...config.skills.map(skill => ({ ...(byId.get(skill.id) ?? { skillId: skill.id, uses: 0, adopted: 0,
+                successRate: null, longestFailureStreak: 0, currentFailureStreak: 0 }), name: skill.name })),
             ...items.filter(item => !activeIds.has(item.skillId)),
         ];
         container.replaceChildren();
@@ -132,7 +132,8 @@ export function mountSkillUI(dialog, getContext, service) {
         const tbody = document.createElement('tbody');
         for (const item of rows) {
             const tr = document.createElement('tr');
-            const values = [item.name || '未命名技能', item.uses ?? 0, item.adopted ?? 0,
+            const historical = item.skillId && !activeIds.has(item.skillId);
+            const values = [`${item.name || '未命名技能'}${historical ? '（历史）' : ''}`, item.uses ?? 0, item.adopted ?? 0,
                 item.successRate == null ? '—' : `${Number(item.successRate.toFixed(1))}%`,
                 item.longestFailureStreak ?? 0, item.currentFailureStreak ?? 0];
             for (const [index, value] of values.entries()) {
