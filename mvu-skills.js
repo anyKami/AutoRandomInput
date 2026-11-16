@@ -2,6 +2,7 @@ import { SKILL_FIELD, SKILL_NAMESPACE, SKILL_PATH, SKILL_SETTINGS_KEY, createSki
     readSkillSelection, requestBefore, skillBlocks, skillErrors, unwrap, validateSelection,
     SKILL_VERSION, skillPacket } from './skills.js';
 import { NARRATIVE_KEY, REPORT_FIELD, REPORT_PATH, narrativeId, validateNarrativeReport } from './narrative.js';
+import { SKILL_REPORTS_KEY, collectSkillStatistics, reportsForSkillTurn } from './skill-stats.js';
 
 export function mvuApi(host = globalThis) {
     if (typeof host.Mvu?.getMvuData === 'function') return host.Mvu;
@@ -53,25 +54,24 @@ export function installSkillService(getContext, onChange = () => {}, host = glob
         }
         return config;
     };
+    const legacyReport = (message, messageId) => {
+        const api = mvuApi(host);
+        let packet;
+        try { packet = skillPacket(api?.getMvuData({ type: 'message', message_id: messageId })); }
+        catch { return null; }
+        // Old messages are only recoverable when their packet records this exact
+        // AI message and selected swipe. Inherited reports are not new adoptions.
+        if (!isObject(packet) || packet._source?.messageId !== messageId ||
+            packet._source?.swipeId !== (message.swipe_id ?? 0)) return null;
+        return Array.isArray(packet.本轮处理) ? packet.本轮处理 : null;
+    };
     const recent = () => {
         const ctx = getContext();
         const index = ctx.chat.findLastIndex(message => message.is_user && !message.is_system && message.extra?.auto_random_input?.skills?.results?.length);
         const turn = ctx.chat[index]?.extra.auto_random_input.skills;
         if (!turn || turn.request.version !== SKILL_VERSION) return { turn, reports: [], issues: [] };
-        const api = mvuApi(host);
-        // Read the response to this batch, not the latest turn's unrelated MVU packet.
-        for (let i = index + 1; i < ctx.chat.length; i++) {
-            const message = ctx.chat[i];
-            if (message.is_system) continue;
-            if (message.is_user) break;
-            let packet;
-            try { packet = skillPacket(api?.getMvuData({ type: 'message', message_id: i })); } catch { continue; }
-            if (isObject(packet)) {
-                const checked = validateSelection(packet, turn.request);
-                return { turn, reports: checked.本轮处理, issues: checked.issues };
-            }
-        }
-        return { turn, reports: [], issues: ['等待该次检定对应的 AI 回复回报采用情况。'] };
+        const { reports, found } = reportsForSkillTurn(ctx.chat, index, legacyReport);
+        return { turn, reports, issues: found ? [] : ['等待该次检定对应的 AI 回复回报采用情况。'] };
     };
     const view = (beforeId = getContext().chat.length) => {
         const ctx = getContext();
@@ -162,11 +162,18 @@ export function installSkillService(getContext, onChange = () => {}, host = glob
             try { report = parseValue(command.value ?? command.args?.at(-1)); } catch { report = null; }
         }
         const reportWritten = narrativeOwned.some(command => commandPath(command) === REPORT_PATH && ['set', 'replace', 'insert', 'add'].includes(command.type ?? command.op));
+        const skillReportWritten = owned.some(command => {
+            if (commandPath(command) !== SKILL_PATH || !['set', 'replace', 'insert', 'add'].includes(command.type ?? command.op)) return false;
+            try {
+                const value = parseValue(command.value ?? command.args?.at(-1));
+                return isObject(value) && Array.isArray(value.本轮处理);
+            } catch { return false; }
+        });
         const reply = index >= 0 ? ctx.chat[index] : null;
         // Matching content does not establish an assistant update: user/direct parses
         // must not allocate a UID and change an older reply's narrative revision.
         const uid = reply?.extra?.[NARRATIVE_KEY]?.uid;
-        frames.set(variables, { chat: ctx.chat, packet, report, reportWritten, index, content, reply, uid, swipeId: reply?.swipe_id ?? 0 });
+        frames.set(variables, { chat: ctx.chat, packet, skillReportWritten, report, reportWritten, index, content, reply, uid, swipeId: reply?.swipe_id ?? 0 });
     };
     const finishUpdate = variables => {
         const frame = frames.get(variables);
@@ -190,12 +197,29 @@ export function installSkillService(getContext, onChange = () => {}, host = glob
         if (!frame || !finishUpdate(variables)) return;
         frames.delete(variables);
         const ctx = getContext();
-        const { report, reportWritten, index, content, reply, uid, swipeId } = frame;
+        const { packet, skillReportWritten, report, reportWritten, index, content, reply, uid, swipeId } = frame;
         const sameReply = !!reply && ctx.chat[index] === reply && (reply.swipe_id ?? 0) === swipeId && reply.extra?.[NARRATIVE_KEY]?.uid === uid && reply.mes === content;
-        const turn = sameReply ? ctx.chat.slice(0, index).findLast(message => message.is_user && !message.is_system)?.extra?.auto_random_input?.narrative : null;
+        const previousUser = sameReply ? ctx.chat.slice(0, index).findLast(message => message.is_user && !message.is_system) : null;
+        const turn = previousUser?.extra?.auto_random_input?.narrative ?? null;
+        const skillTurn = previousUser?.extra?.auto_random_input?.skills ?? null;
         const validReport = !!(reportWritten && sameReply && turn && validateNarrativeReport(report, turn, content).valid);
         if (validReport && !writePacket(variables, report, REPORT_FIELD)) lastError = 'MVU 中的随机指令工作台字段不是对象，未覆盖原值。';
         if (sameReply) {
+            // Save only explicitly written reports for the current request. Never
+            // attribute inherited MVU content to this reply or to a different swipe.
+            const swipe = String(swipeId);
+            const savedSkills = reply.extra?.[SKILL_REPORTS_KEY]?.swipes;
+            if (skillReportWritten && skillTurn?.request?.id && Array.isArray(packet?.本轮处理)) {
+                const ids = new Set((skillTurn.results ?? []).map(item => item.id));
+                const reports = packet.本轮处理.filter(item => ids.has(item.检定ID) && typeof item.处理 === 'string');
+                reply.extra ??= {};
+                const data = reply.extra[SKILL_REPORTS_KEY] ??= { swipes: {} };
+                data.swipes[swipe] = { requestId: skillTurn.request.id, reports };
+                void ctx.saveChat?.();
+            } else if (savedSkills && Object.hasOwn(savedSkills, swipe)) {
+                delete savedSkills[swipe];
+                void ctx.saveChat?.();
+            }
             if (validReport) {
                 reply.extra ??= {};
                 const data = reply.extra[NARRATIVE_KEY] ??= { uid: narrativeId(), swipes: {} };
@@ -231,6 +255,7 @@ export function installSkillService(getContext, onChange = () => {}, host = glob
     const chatChanged = getContext().eventTypes?.CHAT_CHANGED;
     if (chatChanged) events.on(chatChanged, () => { frames = new WeakMap(); });
     return { settings, view, prepare, restore, recent,
+        statistics: () => collectSkillStatistics(getContext().chat, legacyReport),
         revision: () => {
             const { migrationSnapshot, ...config } = settings();
             return `${sheetRevision}:${JSON.stringify(config)}`;
