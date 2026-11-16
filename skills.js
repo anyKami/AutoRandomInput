@@ -4,6 +4,11 @@ import { legacySkillPrompt } from './skill-legacy.js';
 export const SKILL_SETTINGS_KEY = 'auto_random_input_skills';
 export const SKILL_VERSION = 2;
 export const SKILL_DICE = [10, 20, 100];
+export const SKILL_DIFFICULTIES = Object.freeze({ easy: -2, normal: 0, harder: 2, hard: 4, extreme: 6 });
+export const skillDcOffset = (diceSides, difficulty = 'normal') =>
+    Math.round((SKILL_DIFFICULTIES[difficulty] ?? 0) * diceSides / 20);
+export const skillOutcome = result => result.critical === 'success' ? '大成功'
+    : result.critical === 'failure' ? '大失败' : result.passed ? '通过' : '失败';
 export const SKILL_NAMESPACE = '随机指令工作台';
 export const SKILL_FIELD = '技能判定';
 export const SKILL_PATH = `${SKILL_NAMESPACE}.${SKILL_FIELD}`;
@@ -42,6 +47,8 @@ export function normalizeSkillSettings(value = {}) {
         diceSides,
         mode: value?.mode === 'every' ? 'every' : 'challenge',
         maxChecks: [1, 2, 3].includes(value?.maxChecks) ? value.maxChecks : 1,
+        difficulty: Object.hasOwn(SKILL_DIFFICULTIES, value?.difficulty) ? value.difficulty : 'normal',
+        criticalEnabled: value?.criticalEnabled !== false,
         skills: (Array.isArray(value?.skills) ? value.skills : []).filter(isObject).map(skill => ({
             id: typeof skill.id === 'string' && skill.id ? skill.id : newSkillId(),
             name: typeof skill.name === 'string' ? skill.name : '',
@@ -165,20 +172,28 @@ export function readSkillSelection(chat, variables, settings, beforeId = chat.le
     return { checks, issues: validated.issues, source: packet?._source ?? null };
 }
 
-export function rollSkill(sides, modifier, dc, random = Math.random) {
+export function rollSkill(sides, modifier, dc, random = Math.random, criticalEnabled = false) {
     if (!SKILL_DICE.includes(sides) || !Number.isFinite(modifier) || !Number.isFinite(dc)) throw new RangeError('技能骰型、加值或 DC 无法用于计算');
     const sample = random();
     if (!(sample >= 0 && sample < 1)) throw new RangeError('随机源须返回 0（含）至 1（不含）之间的值。');
     const result = Math.floor(sample * sides) + 1;
     const total = result + modifier;
-    return { sides, modifier, dc, result, total, passed: total >= dc };
+    const numericPassed = total >= dc;
+    if (!criticalEnabled) return { sides, modifier, dc, result, total, passed: numericPassed };
+    const critical = result === 1 ? 'failure' : result === sides ? 'success' : null;
+    return { sides, modifier, dc, result, total, numericPassed, critical,
+        passed: critical === 'success' || (critical !== 'failure' && numericPassed) };
 }
 
 export function createSkillTurn(settings, selection, random = Math.random, id = newSkillId()) {
+    const offset = skillDcOffset(settings.diceSides, settings.difficulty);
+    const criticalEnabled = settings.criticalEnabled !== false;
     const results = selection.checks.map((check, i) => ({ ...check, id: `${id}:${i + 1}`,
-        ...rollSkill(settings.diceSides, check.modifier, check.dc, random) }));
+        originalDc: check.dc, dcOffset: offset,
+        ...rollSkill(settings.diceSides, check.modifier, check.dc + offset, random, criticalEnabled) }));
     return {
         request: { version: SKILL_VERSION, id, diceSides: settings.diceSides, mode: settings.mode, maxChecks: settings.maxChecks,
+            difficulty: settings.difficulty ?? 'normal', dcOffset: offset, criticalEnabled,
             ...(selectionRevision(settings) ? { selectionRevision: selectionRevision(settings) } : {}),
             skills: settings.skills.map(skill => ({ id: skill.id, name: skill.name.trim(), modifier: skill.modifier })),
             checks: results.map(({ id, skillId, name }) => ({ id, skillId, name })) },
@@ -193,11 +208,11 @@ export function skillPrompt(turn) {
     return turn.request.version === SKILL_VERSION ? dcSkillPrompt(turn) : legacySkillPrompt(turn);
 }
 
-export const skillFormula = result => `d${result.sides} 骰点 ${result.result} ＋ 加值（${signedModifier(result.modifier)}）＝ ${result.total} ${result.passed ? '≥' : '<'} DC ${result.dc}`;
+export const skillFormula = result => `d${result.sides} 骰点 ${result.result} ＋ 加值（${signedModifier(result.modifier)}）＝ ${result.total} ${result.total >= result.dc ? '≥' : '<'} DC ${result.dc}${result.dcOffset ? `（原始 DC ${result.originalDc}，难度偏移 ${signedModifier(result.dcOffset)}）` : ''}`;
 
 export function skillBlocks(turn, stealth) {
     const legacy = turn.request.version !== SKILL_VERSION;
-    const summary = turn.results.map(r => `> - ${r.name}｜${r.action}｜${legacy ? `d${r.sides} = ${r.result}，旧技能值 ${r.value}` : skillFormula(r)}：**候选${r.passed ? '通过' : '失败'}**`).join('\n');
+    const summary = turn.results.map(r => `> - ${r.name}｜${r.action}｜${legacy ? `d${r.sides} = ${r.result}，旧技能值 ${r.value}` : skillFormula(r)}：**候选${skillOutcome(r)}**`).join('\n');
     const display = !stealth && summary ? `\n\n> **${legacy ? '旧版' : ''}技能检定 · 待 AI 确认是否采用**\n${summary}` : '';
     // Selection instructions stay out of the rendered conversation, while remaining in the model input.
     return { display, block: `${display}\n\n<!--\n${skillPrompt(turn).replaceAll('--', '-&#45;')}\n-->` };

@@ -59,6 +59,7 @@ export const SKILL_TEMPLATES = [
 function snapshot(source) {
     const config = normalizeSkillSettings(source);
     return { version: SKILL_VERSION, diceSides: config.diceSides, mode: config.mode, maxChecks: config.maxChecks,
+        difficulty: config.difficulty, criticalEnabled: config.criticalEnabled,
         pointLimitMode: config.pointLimitMode, pointLimit: config.pointLimit,
         skills: config.skills.map(skill => ({ ...skill })),
         ...(config.migrationSnapshot ? { migrationSnapshot: config.migrationSnapshot } : {}) };
@@ -126,6 +127,7 @@ export function skillGroupMatches(current, group) {
     const fields = value => {
         const config = normalizeSkillSettings(value);
         return { diceSides: config.diceSides, mode: config.mode, maxChecks: config.maxChecks,
+            difficulty: config.difficulty, criticalEnabled: config.criticalEnabled,
             pointLimitMode: config.pointLimitMode, pointLimit: config.pointLimit,
             skills: config.skills.map(({ name, modifier }) => ({ name, modifier })) };
     };

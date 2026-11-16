@@ -105,6 +105,10 @@ function skillGroup(group, index) {
     const mode = group.mode === undefined ? 'challenge' : group.mode;
     const maxChecks = group.maxChecks === undefined ? 1 : group.maxChecks;
     const pointLimitMode = group.pointLimitMode === undefined ? 'auto' : group.pointLimitMode;
+    const difficulty = group.difficulty === undefined ? 'normal' : group.difficulty;
+    const criticalEnabled = group.criticalEnabled === undefined ? true : group.criticalEnabled;
+    requireValue(['easy', 'normal', 'harder', 'hard', 'extreme'].includes(difficulty), location, 'difficulty 不符合允许的难度。');
+    requireValue(typeof criticalEnabled === 'boolean', location, 'criticalEnabled 须为布尔值。');
     requireValue(['challenge', 'every'].includes(mode), location, 'mode 须为 challenge 或 every。');
     requireValue([1, 2, 3].includes(maxChecks), location, 'maxChecks 须为 1、2 或 3。');
     requireValue(['auto', 'custom'].includes(pointLimitMode), location, 'pointLimitMode 须为 auto 或 custom。');
@@ -118,7 +122,7 @@ function skillGroup(group, index) {
         requireValue(Number.isSafeInteger(skill.modifier), position, 'modifier 须为整数加值。');
         return { name: skillName, modifier: skill.modifier };
     });
-    const config = { name, diceSides: group.diceSides, mode, maxChecks, pointLimitMode, skills };
+    const config = { name, diceSides: group.diceSides, mode, maxChecks, difficulty, criticalEnabled, pointLimitMode, skills };
     config.pointLimit = pointLimitMode === 'auto' ? recommendedPointLimit(config) : group.pointLimit;
     const errors = skillErrors(config);
     requireValue(!errors.length, location, errors.join('\n'));
