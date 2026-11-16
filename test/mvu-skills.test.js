@@ -351,8 +351,10 @@ test('recent adoption reports read the corresponding MVU data without reply-edit
     h.reply();
     assert.equal(h.service.recent().turn.request.id, user.extra.auto_random_input.skills.request.id);
     assert.equal(h.service.recent().reports.length, 2);
+    assert.equal(h.service.statistics().reduce((sum, s) => sum + s.adopted, 0), 1);
     h.ctx.chat[3].swipe_id = 1;
-    assert.equal(h.service.recent().reports.length, 2);
+    assert.equal(h.service.recent().reports.length, 0);
+    assert.equal(h.service.statistics().reduce((sum, s) => sum + s.adopted, 0), 0);
     h.ctx.chat[3].swipe_id = 0; h.ctx.chat[3].mes += '修改';
     assert.equal(h.service.recent().reports.length, 2);
 });
@@ -603,4 +605,33 @@ test('reparsed narrative edits clear stale reports but preserve actions on the s
     await h.ctx.eventSource.emit('mag_before_message_update', { variables: wrongTurn });
     assert.deepEqual(data.swipes[0], { actions });
     assert.equal(wrongTurn.stat_data.随机指令工作台?.剧情回报, undefined);
+});
+
+test('skill adoption is saved on its exact reply swipe and inherited packets cannot duplicate it', async () => {
+    const h = fixture(); await h.install();
+    await h.ctx.eventSource.emit('before', 'normal'); await h.commit();
+    const { variables: initial } = await h.parse(h.reply());
+    await h.ctx.eventSource.emit('mag_before_message_update', { variables: initial }); h.data.set(1, initial);
+    h.input.value = '尝试开锁'; await h.ctx.eventSource.emit('before', 'normal');
+    const user = await h.commit();
+    const request = h.reply();
+    const reply = h.ctx.chat.at(-1);
+    const variables = { stat_data: { 场景: {} }, schema: {} };
+    const packet = { 规则版本: 2, 请求ID: request.id, 待判定: [],
+        本轮处理: [{ 检定ID: user.extra[SETTINGS_KEY].skills.results[0].id, 处理: '采用检定' }] };
+    await h.ctx.eventSource.emit('mag_command_parsed', variables,
+        [{ op: 'replace', path: '/随机指令工作台/技能判定', value: packet }], reply.mes);
+    await h.ctx.eventSource.emit('mag_before_message_update', { variables }); h.data.set(3, variables);
+    const data = reply.extra.auto_random_input_skill_reports.swipes['0'];
+    assert.equal(data.requestId, request.id);
+    assert.equal(data.reports[0].处理, '采用检定');
+    assert.equal(h.service.statistics().reduce((sum, s) => sum + s.adopted, 0), 1);
+    reply.swipe_id = 1;
+    assert.equal(h.service.statistics().reduce((sum, s) => sum + s.adopted, 0), 0);
+    const inherited = structuredClone(variables);
+    await h.ctx.eventSource.emit('mag_command_parsed', inherited, [], reply.mes);
+    await h.ctx.eventSource.emit('mag_before_message_update', { variables: inherited });
+    assert.equal(h.service.statistics().reduce((sum, s) => sum + s.adopted, 0), 0);
+    reply.swipe_id = 0;
+    assert.equal(h.service.statistics().reduce((sum, s) => sum + s.adopted, 0), 1);
 });
