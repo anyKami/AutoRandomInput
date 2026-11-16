@@ -43,6 +43,7 @@ export function installSkillService(getContext, onChange = () => {}, host = glob
     let frames = new WeakMap();
     let lastError = '';
     let sheetRevision = 0;
+    let legacyReportCache = new WeakMap();
     const settings = () => {
         const ctx = getContext();
         const saved = ctx.chatMetadata?.[SKILL_SETTINGS_KEY];
@@ -55,15 +56,23 @@ export function installSkillService(getContext, onChange = () => {}, host = glob
         return config;
     };
     const legacyReport = (message, messageId) => {
+        const key = `${messageId}:${message.swipe_id ?? 0}:${message.mes ?? ''}`;
+        const cached = legacyReportCache.get(message);
+        if (cached?.key === key) return cached.value;
         const api = mvuApi(host);
         let packet;
         try { packet = skillPacket(api?.getMvuData({ type: 'message', message_id: messageId })); }
         catch { return null; }
         // Old messages are only recoverable when their packet records this exact
         // AI message and selected swipe. Inherited reports are not new adoptions.
-        if (!isObject(packet) || packet._source?.messageId !== messageId ||
-            packet._source?.swipeId !== (message.swipe_id ?? 0)) return null;
-        return Array.isArray(packet.本轮处理) ? packet.本轮处理 : null;
+        const value = isObject(packet) && packet._source?.messageId === messageId &&
+            packet._source?.swipeId === (message.swipe_id ?? 0) && Array.isArray(packet.本轮处理)
+            ? packet.本轮处理 : null;
+        // Completed historical replies are immutable until their text or swipe changes.
+        // Do not cache an unavailable report on the last reply while MVU is still writing.
+        const ctx = getContext();
+        if (value || messageId < ctx.chat.length - 1) legacyReportCache.set(message, { key, value });
+        return value;
     };
     const recent = () => {
         const ctx = getContext();
@@ -253,7 +262,7 @@ export function installSkillService(getContext, onChange = () => {}, host = glob
     // It also restores buffers for older assistant-only MVU event sequences.
     events.on('mag_before_message_update', beforeWrite);
     const chatChanged = getContext().eventTypes?.CHAT_CHANGED;
-    if (chatChanged) events.on(chatChanged, () => { frames = new WeakMap(); });
+    if (chatChanged) events.on(chatChanged, () => { frames = new WeakMap(); legacyReportCache = new WeakMap(); });
     return { settings, view, prepare, restore, recent,
         statistics: () => collectSkillStatistics(getContext().chat, legacyReport),
         revision: () => {
