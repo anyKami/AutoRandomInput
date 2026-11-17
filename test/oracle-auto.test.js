@@ -863,3 +863,47 @@ test('switching between append mode and dedicated mode does not create redundant
     assert.equal(h.store.groups.length, 2);
     assert.equal(h.controller.state().groupId, dedicated, 'existing dedicated group is reused');
 });
+
+test('copying or exporting the visible appended group can freeze it as ordinary rules', async () => {
+    const { createGroup } = await import('../core.js');
+    const h = fixture();
+    await h.start(5, '', { appendMode: true });
+    const current = activeGroup(effectiveRandomSettings(h.ctx));
+    const snapshot = createGroup('保存组合', current);
+    assert.equal(snapshot.rules.length, h.store.groups[0].rules.length + 3);
+    assert.ok(snapshot.rules.every(rule => !current.rules.some(original => original.id === rule.id)));
+    const serialized = serializeConfigFile([{ ...current, name: '组合导出' }]);
+    const restored = parseConfigFile(serialized);
+    assert.equal(restored.randomGroups[0].rules.length, snapshot.rules.length);
+    assert.equal(h.store.groups.length, 1, 'copying a snapshot in memory does not allocate a group automatically');
+});
+
+test('changing placement while a request is in flight uses the current checkbox setting', async () => {
+    const response = deferred(), h = fixture({ run: () => response.promise });
+    const request = h.start(3);
+    await tick();
+    assert.equal(h.requests.length, 1);
+    h.controller.update({ interval: 3, prompt: '', appendMode: true });
+    response.resolve(JSON.stringify(autoBundle()));
+    await request;
+    assert.equal(h.requests.length, 1);
+    assert.equal(h.store.groups.length, 1, 'late default-mode response must not create a group after append is selected');
+    assert.equal(activeGroup(effectiveRandomSettings(h.ctx)).rules.length, h.store.groups[0].rules.length + 3);
+});
+
+test('narrative append selects an active scene group ahead of the long group', async () => {
+    const { NARRATIVE_KEY } = await import('../narrative.js');
+    const { createGroup } = await import('../core.js');
+    const h = fixture();
+    const long = h.store.groups[0], scene = createGroup('场景');
+    h.store.groups.push(scene);
+    h.ctx.chatMetadata[NARRATIVE_KEY] = { enabled: true, longGroupId: long.id,
+        sceneGroupId: scene.id, sceneRevision: 'active', sceneGroupRevision: 'active' };
+    h.setRun(async () => JSON.stringify({ ...autoBundle(), formatVersion: 2 }));
+    await h.start(5, '', { appendMode: true });
+    assert.equal(h.store.groups.length, 2);
+    assert.equal(h.controller.state().appendGroupId, scene.id);
+    const effective = effectiveRandomSettings(h.ctx);
+    assert.equal(effective.groups.find(group => group.id === long.id).rules.length, long.rules.length);
+    assert.equal(effective.groups.find(group => group.id === scene.id).rules.length, scene.rules.length + 3);
+});
