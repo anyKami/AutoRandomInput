@@ -907,3 +907,22 @@ test('narrative append selects an active scene group ahead of the long group', a
     assert.equal(effective.groups.find(group => group.id === long.id).rules.length, long.rules.length);
     assert.equal(effective.groups.find(group => group.id === scene.id).rules.length, scene.rules.length + 3);
 });
+
+test('a frozen copy does not steal the future append target when next interval generates', async () => {
+    const { createGroup } = await import('../core.js');
+    const h = fixture();
+    await h.start(5, '', { appendMode: true });
+    const originalId = h.controller.state().appendGroupId;
+    const frozen = createGroup('固化版本', activeGroup(effectiveRandomSettings(h.ctx)));
+    h.store.groups.push(frozen);
+    selectRandomGroup(h.ctx, frozen.id, { keepAppendTarget: true });
+    assert.equal(h.controller.state().appendGroupId, originalId);
+    const frozenCount = frozen.rules.length;
+    h.setRun(async () => JSON.stringify(autoBundle({ command: '第三批自动结果' })));
+    await h.controller.regenerate();
+    assert.equal(h.store.groups.length, 2);
+    assert.equal(h.controller.state().appendGroupId, originalId);
+    assert.equal(activeGroup(effectiveRandomSettings(h.ctx)).rules.length, frozenCount);
+    assert.equal(effectiveRandomSettings(h.ctx).groups.find(group => group.id === originalId).rules.at(-1).commands[0], '第三批自动结果');
+    assert.equal(frozen.rules.at(-1).commands[0], '新的剧情变化', 'the snapshot must remain permanent and unchanged');
+});
