@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import vm from 'node:vm';
 import { activeGroup, createGroup, createRule, normalizeSettings, SETTINGS_KEY, uniqueGroupName } from '../core.js';
-import { effectiveRandomSettings, selectRandomGroup } from '../oracle-auto-state.js';
+import { AUTO_ORACLE_KEY, autoOracleOwner, autoOracleState, effectiveRandomSettings, selectRandomGroup } from '../oracle-auto-state.js';
 
 // Run the real entry-point handlers without booting SillyTavern. The fixture only
 // supplies host state and DOM fields; selection changes remain real store changes.
@@ -33,11 +33,11 @@ function fixture() {
             return group.rules.find(rule => rule.id === scope.selectedRuleId) ?? group.rules[0];
         },
         $: node, save() { saves++; }, render() {},
-        createGroup, uniqueGroupName, selectRandomGroup, effectiveRandomSettings,
+        createGroup, uniqueGroupName, selectRandomGroup, effectiveRandomSettings, autoOracleState,
     };
     vm.createContext(scope);
     vm.runInContext(handlers, scope, { filename: 'index.js:group-form' });
-    return { store, first, second, node, scope, saves: () => saves,
+    return { store, first, second, ctx, node, scope, saves: () => saves,
         open: action => scope.openGroupForm(action),
         submit: () => scope.submitGroup({ preventDefault() {} }),
         switchTo: group => { selectRandomGroup(ctx, group.id); scope.selectedRuleId = group.rules[0].id; },
@@ -118,4 +118,23 @@ test('confirmation cannot delete the last remaining group or rule', () => {
     assert.equal(h.store.groups.length, 1);
     assert.equal(h.first.rules.length, 1);
     assert.equal(h.saves(), 0);
+});
+
+test('copying an appended group freezes the visible rules once and leaves the live tail on the original', () => {
+    const h = fixture();
+    const generated = createRule('自动追加', { diceSides: 1, commands: ['新的剧情变化'] });
+    h.ctx.chatMetadata[AUTO_ORACLE_KEY] = {
+        appendMode: true, appendGroupId: h.first.id, appendRules: [generated],
+        ownerKey: autoOracleOwner(h.ctx), useGroup: false,
+    };
+    assert.equal(h.scope.currentGroup().rules.length, h.first.rules.length + 1);
+    h.open('copy'); h.node('#ari-group-name').value = '已经固化的配置';
+    h.submit();
+    const copied = h.store.groups.find(group => group.name === '已经固化的配置');
+    assert.ok(copied);
+    assert.equal(copied.rules.length, h.first.rules.length + 1);
+    assert.equal(h.ctx.chatMetadata[AUTO_ORACLE_KEY].appendGroupId, h.first.id);
+    assert.equal(h.scope.currentGroup().id, copied.id);
+    assert.equal(h.scope.currentGroup().rules.length, copied.rules.length, 'must not append the same generated dice twice');
+    assert.equal(h.ctx.extensionSettings[SETTINGS_KEY].groups.length, 3, 'only the user-requested copy creates a group');
 });
