@@ -9,13 +9,13 @@ const chatKey = ctx => JSON.stringify([ctx.groupId != null ? null : ctx.characte
 
 // Append mode targets an existing group, never creates or changes a shared one.
 // The generated tail is stored separately in this chat's metadata.
-function appendTargetGroup(ctx, narrative) {
+function appendTargetGroup(ctx, narrative, auto = {}) {
     const store = ctx.extensionSettings[SETTINGS_KEY];
     const sceneActive = narrative.sceneGroupId && narrative.sceneGroupId !== narrative.longGroupId &&
         narrative.sceneGroupRevision === narrative.sceneRevision;
     const targetId = narrative.enabled
         ? (sceneActive ? narrative.sceneGroupId : narrative.longGroupId)
-        : store.activeGroupId;
+        : (store.groups.some(group => group.id === auto.appendGroupId) ? auto.appendGroupId : store.activeGroupId);
     return store.groups.find(group => group.id === targetId) ?? null;
 }
 
@@ -78,7 +78,7 @@ export function installAutoOracle(getContext, service, {
             appendMode: settings.appendMode };
         task = job; onChange();
         try {
-            if (job.appendMode && !appendTargetGroup(ctx, narrative))
+            if (job.appendMode && !appendTargetGroup(ctx, narrative, settings))
                 throw new Error(narrative.enabled
                     ? '追加模式需要在剧情设置中先绑定平时或有效的场景配置组。'
                     : '追加模式需要先选择一个现有随机指令配置组。');
@@ -122,7 +122,7 @@ export function installAutoOracle(getContext, service, {
             // If the user changes it while Oracle is running, use their latest
             // choice instead of accidentally creating a redundant group.
             if (next.appendMode) {
-                const target = appendTargetGroup(ctx, currentNarrative);
+                const target = appendTargetGroup(ctx, currentNarrative, next);
                 if (!target) throw new Error('追加目标配置组已被删除或解绑，未应用生成结果。');
                 // One managed tail per chat. Every regeneration replaces only
                 // this tail, never the user's original dice or another chat's
