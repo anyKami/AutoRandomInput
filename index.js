@@ -318,7 +318,8 @@ function submitGroup(event) {
         }
         if (action.type === 'rename') group.name = name;
         else {
-            const next = createGroup(name, action.type === 'copy' ? group : undefined);
+            const visible = effectiveRandomSettings(context()).groups.find(item => item.id === group.id) ?? group;
+            const next = createGroup(name, action.type === 'copy' ? visible : undefined);
             store.groups.push(next);
             selectRandomGroup(context(), next.id);
         }
