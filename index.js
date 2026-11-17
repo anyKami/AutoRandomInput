@@ -8,7 +8,7 @@ import { ORACLE_SETTINGS_KEY, normalizeOracleSettings } from './oracle-config.js
 import { createOracleService, createOracleRequestGate } from './oracle-service.js';
 import { mountOracleSettings } from './oracle-forms.js';
 import { mountOracleUI } from './oracle-ui.js';
-import { effectiveRandomSettings, selectRandomGroup } from './oracle-auto-state.js';
+import { autoOracleState, effectiveRandomSettings, isAutoAppendedRule, selectRandomGroup } from './oracle-auto-state.js';
 import { installAutoOracle } from './oracle-auto.js';
 import { mountAutoOracleUI } from './oracle-auto-ui.js';
 import { mountMetadataEditor, mountNarrativeUI } from './narrative-ui.js';
@@ -17,7 +17,17 @@ import { foldNarrative } from './narrative.js';
 const context = () => SillyTavern.getContext();
 const settings = () => context().extensionSettings[SETTINGS_KEY];
 const currentGroup = () => activeGroup(effectiveRandomSettings(context()));
-const save = () => context().saveSettingsDebounced();
+const save = () => {
+    const ctx = context();
+    ctx.saveSettingsDebounced();
+    // Composed auto rules live in chat metadata, while manual rules live in
+    // extension settings. Persist both when an editable overlay is visible.
+    const auto = autoOracleState(ctx);
+    if (auto.appendMode && auto.appendRules.length) {
+        if (ctx.saveMetadataDebounced) ctx.saveMetadataDebounced();
+        else if (ctx.saveMetadata) void ctx.saveMetadata();
+    }
+};
 let dialog;
 let initialized = false;
 let groupAction = null;
@@ -158,7 +168,9 @@ function renderRules() {
         row.dataset.enabled = String(rule.enabled);
         row.innerHTML = '<button type="button" class="ari-rule-select"><span class="ari-small-die"></span><span class="ari-rule-label"></span></button><label class="ari-toggle"><input type="checkbox"><span class="ari-switch"></span></label>';
         row.querySelector('.ari-small-die').textContent = `D${rule.diceSides}`;
-        row.querySelector('.ari-rule-label').textContent = rule.name || `骰子指令 ${index + 1}`;
+        const auto = isAutoAppendedRule(context(), rule.id);
+        row.dataset.auto = String(auto);
+        row.querySelector('.ari-rule-label').textContent = `${rule.name || `骰子指令 ${index + 1}`}${auto ? ' · 自动追加' : ''}`;
         const button = row.querySelector('button');
         button.title = rule.name;
         button.setAttribute('aria-pressed', String(rule.id === selectedRule().id));
@@ -180,8 +192,12 @@ function renderRules() {
 function renderCommands() {
     const rule = selectedRule();
     $('#ari-rule-name').value = rule.name;
-    $('#ari-delete-rule').disabled = currentGroup().rules.length <= 1;
-    $('#ari-delete-rule').title = currentGroup().rules.length <= 1 ? '至少保留一套骰子指令' : '删除当前骰子指令';
+    const autoRule = isAutoAppendedRule(context(), rule.id);
+    const manualCount = settings().groups.find(item => item.id === currentGroup().id)?.rules.length ?? 0;
+    $('#ari-delete-rule').disabled = autoRule || manualCount <= 1;
+    $('#ari-delete-rule').title = autoRule ? '自动追加的骰子可暂停；下一次生成时会更新此部分'
+        : manualCount <= 1 ? '至少保留一套手动骰子指令' : '删除当前骰子指令';
+    $('#ari-auto-rule-note').hidden = !autoRule;
     $('#ari-disabled-hint').hidden = rule.enabled;
     $('#ari-sides').value = String(rule.diceSides);
     $('#ari-dice-label').textContent = `D${rule.diceSides}`;
@@ -371,8 +387,12 @@ function bindUI() {
     });
     const addRule = copy => {
         const group = currentGroup();
+        const stored = settings().groups.find(item => item.id === group.id);
+        if (!stored) return;
         const rule = createRule(uniqueName(group.rules, copy ? `${selectedRule().name} 副本` : '新骰子指令'), copy ? selectedRule() : undefined);
-        group.rules.push(rule);
+        // The displayed group may have a chat-local appended tail. Add manual
+        // dice to the real group instead of pushing into the temporary array.
+        stored.rules.push(rule);
         selectedRuleId = rule.id;
         closeGroupForm(); save(); renderRules(); renderCommands();
         $('#ari-rule-name').focus(); $('#ari-rule-name').select();
