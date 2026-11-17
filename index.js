@@ -318,10 +318,17 @@ function submitGroup(event) {
         }
         if (action.type === 'rename') group.name = name;
         else {
-            const visible = effectiveRandomSettings(context()).groups.find(item => item.id === group.id) ?? group;
+            const ctx = context();
+            const visible = effectiveRandomSettings(ctx).groups.find(item => item.id === group.id) ?? group;
+            const auto = autoOracleState(ctx);
+            // A copy of the visible composite already contains the generated
+            // dice as ordinary rules. Keep the live overlay on its old group,
+            // otherwise selecting the copy would display every auto die twice.
+            const keepAppendTarget = action.type === 'copy' && auto.appendMode &&
+                auto.appendGroupId === group.id && auto.appendRules.length > 0;
             const next = createGroup(name, action.type === 'copy' ? visible : undefined);
             store.groups.push(next);
-            selectRandomGroup(context(), next.id);
+            selectRandomGroup(ctx, next.id, { keepAppendTarget });
         }
     }
     save();
