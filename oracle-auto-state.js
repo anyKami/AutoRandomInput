@@ -116,14 +116,14 @@ export const isAutoAppendedRule = (ctx, id) => {
         state.appendRules.some(rule => rule.id === id);
 };
 
-export function selectRandomGroup(ctx, id) {
+export function selectRandomGroup(ctx, id, { keepAppendTarget = false } = {}) {
     const state = reconcileAutoOracleState(ctx);
     if (ctx.chatMetadata?.[AUTO_ORACLE_KEY]) {
         if (state.appendMode) {
             state.useGroup = false;
             // In narrative mode, layer bindings (not the random-tab selection)
             // determine where the chat-local overlay is injected.
-            if (!narrativeConfig(ctx).enabled) state.appendGroupId = id;
+            if (!keepAppendTarget && !narrativeConfig(ctx).enabled) state.appendGroupId = id;
         } else state.useGroup = id === state.groupId;
         saveAutoOracleState(ctx, state);
     }
