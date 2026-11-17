@@ -118,7 +118,10 @@ export function installAutoOracle(getContext, service, {
             }
             if (currentNarrative.enabled !== narrative.enabled || (narrative.enabled &&
                 (currentNarrative.sceneRevision !== job.sceneRevision || currentNarrative.sceneGroupId !== job.sceneGroupId || currentNarrative.longGroupId !== narrative.longGroupId))) return;
-            if (job.appendMode) {
+            // Placement is a local choice, not part of the model request.
+            // If the user changes it while Oracle is running, use their latest
+            // choice instead of accidentally creating a redundant group.
+            if (next.appendMode) {
                 const target = appendTargetGroup(ctx, currentNarrative);
                 if (!target) throw new Error('追加目标配置组已被删除或解绑，未应用生成结果。');
                 // One managed tail per chat. Every regeneration replaces only
