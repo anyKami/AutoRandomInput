@@ -748,3 +748,181 @@ for (const key of ['sceneGroupId', 'longGroupId']) test(`rebinding ${key} while 
     assert.equal(h.ctx.chatMetadata[NARRATIVE_KEY][key], selected.id);
     assert.equal(JSON.stringify(h.store.groups), before);
 });
+
+test('append mode adds chat-local dice after manual dice and replaces only that tail on every cycle', async () => {
+    const h = fixture(), before = structuredClone(h.store.groups[0]);
+    h.setRun(async () => JSON.stringify(autoBundle({ diceSides: 6, commandCount: 3, ruleCount: 2 })));
+    await h.start(1, '', { appendMode: true, diceSides: 6, commandCount: 3, ruleCount: 2 });
+    assert.equal(h.requests.length, 1);
+    assert.equal(h.store.groups.length, 1, 'append must not create a group');
+    assert.deepEqual(h.store.groups[0], before, 'original library stays byte-for-byte unchanged');
+    const id = before.id;
+    let visible = activeGroup(effectiveRandomSettings(h.ctx));
+    assert.equal(visible.id, id);
+    assert.equal(visible.rules.length, before.rules.length + 2);
+    assert.deepEqual(visible.rules.slice(0, before.rules.length), before.rules);
+    const firstIds = visible.rules.slice(-2).map(rule => rule.id);
+    const record = createRollRecord({ ...effectiveRandomSettings(h.ctx), enabled: true }, () => 0);
+    assert.equal(record.rolls.length, before.rules.length + 2);
+    h.setRun(async () => JSON.stringify(autoBundle({ command: '第二批生成的指令', diceSides: 6, commandCount: 3, ruleCount: 2 })));
+    await h.send(); await h.receive();
+    visible = activeGroup(effectiveRandomSettings(h.ctx));
+    assert.equal(h.store.groups.length, 1);
+    assert.equal(visible.rules.length, before.rules.length + 2, 'repeated updates must not accumulate dice');
+    assert.ok(visible.rules.slice(-2).every(rule => !firstIds.includes(rule.id)));
+    assert.equal(visible.rules.at(-1).commands[0], '第二批生成的指令');
+    assert.deepEqual(h.store.groups[0], before);
+    assert.equal(h.controller.state().appendRules.length, 2);
+    assert.equal(h.controller.state().useGroup, false);
+    assert.equal(h.controller.state().appendGroupId, id);
+    h.controller.stop();
+    assert.equal(activeGroup(effectiveRandomSettings(h.ctx)).rules.length, before.rules.length + 2,
+        'turning off scheduling retains the last generated tail');
+});
+
+test('append mode preserves selected manual group and supports moving the tail without extra calls', async () => {
+    const { createGroup } = await import('../core.js');
+    const h = fixture();
+    const alternative = createGroup('第二组'); h.store.groups.push(alternative);
+    h.setRun(async () => JSON.stringify(autoBundle({ ruleCount: 1 })));
+    await h.start(5, '', { appendMode: true, ruleCount: 1 });
+    const old = h.store.groups[0];
+    assert.equal(activeGroup(effectiveRandomSettings(h.ctx)).rules.length, old.rules.length + 1);
+    const calls = h.requests.length;
+    selectRandomGroup(h.ctx, alternative.id);
+    assert.equal(h.requests.length, calls);
+    assert.equal(h.controller.state().appendGroupId, alternative.id);
+    assert.equal(activeGroup(effectiveRandomSettings(h.ctx)).id, alternative.id);
+    assert.equal(activeGroup(effectiveRandomSettings(h.ctx)).rules.length, alternative.rules.length + 1);
+    assert.equal(effectiveRandomSettings(h.ctx).groups.find(group => group.id === old.id).rules.length, old.rules.length);
+    assert.equal(alternative.rules.length, 1, 'shared target should never gain a permanent auto rule');
+});
+
+test('append mode isolates chat branches and other chats without creating copied groups', async () => {
+    const h = fixture();
+    h.ctx.chatMetadata.integrity = 'append-parent';
+    h.setRun(async () => JSON.stringify(autoBundle({ ruleCount: 2 })));
+    await h.start(2, '', { appendMode: true, ruleCount: 2 });
+    const parentMetadata = structuredClone(h.ctx.chatMetadata), parentChat = structuredClone(h.ctx.chat);
+    const originalGroups = structuredClone(h.store.groups);
+    const groupCount = h.store.groups.length;
+    const branchMetadata = { ...structuredClone(parentMetadata), integrity: 'append-branch' };
+    await h.switchChat('分支', structuredClone(parentChat), branchMetadata);
+    assert.equal(h.store.groups.length, groupCount, 'branch must not clone any group for a chat-local overlay');
+    assert.equal(activeGroup(effectiveRandomSettings(h.ctx)).rules.length, h.store.groups[0].rules.length + 2);
+    h.setRun(async () => JSON.stringify(autoBundle({ command: '分支中新的指令', ruleCount: 2 })));
+    await h.controller.regenerate();
+    assert.equal(h.store.groups.length, groupCount);
+    assert.equal(activeGroup(effectiveRandomSettings(h.ctx)).rules.at(-1).commands[0], '分支中新的指令');
+    assert.deepEqual(h.store.groups, originalGroups);
+    await h.switchChat('聊天甲', parentChat, parentMetadata);
+    assert.equal(h.store.groups.length, groupCount);
+    assert.equal(activeGroup(effectiveRandomSettings(h.ctx)).rules.at(-1).commands[0], '新的剧情变化',
+        'switching back restores parent-specific generated content');
+    await h.switchChat('无自动设置的新聊天', [reply('开场')], {});
+    assert.equal(activeGroup(effectiveRandomSettings(h.ctx)).rules.length, h.store.groups[0].rules.length);
+});
+
+test('narrative append mode overlays an existing configured layer without allocating a scene group', async () => {
+    const { NARRATIVE_KEY } = await import('../narrative.js');
+    const h = fixture();
+    const manualId = h.store.groups[0].id;
+    h.ctx.chatMetadata[NARRATIVE_KEY] = { enabled: true, longGroupId: manualId };
+    h.setRun(async () => JSON.stringify({ ...autoBundle({ command: '叠加剧情' }), formatVersion: 2 }));
+    await h.start(3, '', { appendMode: true, ruleCount: 3 });
+    assert.equal(h.requests.length, 1);
+    assert.equal(h.store.groups.length, 1);
+    assert.equal(h.controller.state().appendGroupId, manualId);
+    assert.equal(h.ctx.chatMetadata[NARRATIVE_KEY].sceneGroupId, undefined);
+    assert.equal(effectiveRandomSettings(h.ctx).groups.find(group => group.id === manualId).rules.length, 4);
+});
+
+test('narrative append mode lacking a bound layer fails before spending a model request', async () => {
+    const { NARRATIVE_KEY } = await import('../narrative.js');
+    const h = fixture();
+    h.ctx.chatMetadata[NARRATIVE_KEY] = { enabled: true };
+    await h.start(1, '', { appendMode: true });
+    assert.equal(h.requests.length, 0);
+    assert.equal(h.store.groups.length, 1);
+    assert.match(h.controller.state().lastResult.message, /先绑定/);
+});
+
+test('switching between append mode and dedicated mode does not create redundant groups', async () => {
+    const h = fixture();
+    await h.start(4);
+    const dedicated = h.controller.state().groupId;
+    assert.equal(h.store.groups.length, 2);
+    h.controller.update({ interval: 4, prompt: '', appendMode: true });
+    await h.controller.regenerate();
+    assert.equal(h.store.groups.length, 2);
+    assert.equal(h.controller.state().appendMode, true);
+    assert.equal(h.controller.state().useGroup, false);
+    assert.equal(activeGroup(effectiveRandomSettings(h.ctx)).id, h.store.groups[0].id);
+    h.controller.update({ interval: 4, prompt: '', appendMode: false });
+    await h.controller.regenerate();
+    assert.equal(h.store.groups.length, 2);
+    assert.equal(h.controller.state().groupId, dedicated, 'existing dedicated group is reused');
+});
+
+test('copying or exporting the visible appended group can freeze it as ordinary rules', async () => {
+    const { createGroup } = await import('../core.js');
+    const h = fixture();
+    await h.start(5, '', { appendMode: true });
+    const current = activeGroup(effectiveRandomSettings(h.ctx));
+    const snapshot = createGroup('保存组合', current);
+    assert.equal(snapshot.rules.length, h.store.groups[0].rules.length + 3);
+    assert.ok(snapshot.rules.every(rule => !current.rules.some(original => original.id === rule.id)));
+    const serialized = serializeConfigFile([{ ...current, name: '组合导出' }]);
+    const restored = parseConfigFile(serialized);
+    assert.equal(restored.randomGroups[0].rules.length, snapshot.rules.length);
+    assert.equal(h.store.groups.length, 1, 'copying a snapshot in memory does not allocate a group automatically');
+});
+
+test('changing placement while a request is in flight uses the current checkbox setting', async () => {
+    const response = deferred(), h = fixture({ run: () => response.promise });
+    const request = h.start(3);
+    await tick();
+    assert.equal(h.requests.length, 1);
+    h.controller.update({ interval: 3, prompt: '', appendMode: true });
+    response.resolve(JSON.stringify(autoBundle()));
+    await request;
+    assert.equal(h.requests.length, 1);
+    assert.equal(h.store.groups.length, 1, 'late default-mode response must not create a group after append is selected');
+    assert.equal(activeGroup(effectiveRandomSettings(h.ctx)).rules.length, h.store.groups[0].rules.length + 3);
+});
+
+test('narrative append selects an active scene group ahead of the long group', async () => {
+    const { NARRATIVE_KEY } = await import('../narrative.js');
+    const { createGroup } = await import('../core.js');
+    const h = fixture();
+    const long = h.store.groups[0], scene = createGroup('场景');
+    h.store.groups.push(scene);
+    h.ctx.chatMetadata[NARRATIVE_KEY] = { enabled: true, longGroupId: long.id,
+        sceneGroupId: scene.id, sceneRevision: 'active', sceneGroupRevision: 'active' };
+    h.setRun(async () => JSON.stringify({ ...autoBundle(), formatVersion: 2 }));
+    await h.start(5, '', { appendMode: true });
+    assert.equal(h.store.groups.length, 2);
+    assert.equal(h.controller.state().appendGroupId, scene.id);
+    const effective = effectiveRandomSettings(h.ctx);
+    assert.equal(effective.groups.find(group => group.id === long.id).rules.length, long.rules.length);
+    assert.equal(effective.groups.find(group => group.id === scene.id).rules.length, scene.rules.length + 3);
+});
+
+test('a frozen copy does not steal the future append target when next interval generates', async () => {
+    const { createGroup } = await import('../core.js');
+    const h = fixture();
+    await h.start(5, '', { appendMode: true });
+    const originalId = h.controller.state().appendGroupId;
+    const frozen = createGroup('固化版本', activeGroup(effectiveRandomSettings(h.ctx)));
+    h.store.groups.push(frozen);
+    selectRandomGroup(h.ctx, frozen.id, { keepAppendTarget: true });
+    assert.equal(h.controller.state().appendGroupId, originalId);
+    const frozenCount = frozen.rules.length;
+    h.setRun(async () => JSON.stringify(autoBundle({ command: '第三批自动结果' })));
+    await h.controller.regenerate();
+    assert.equal(h.store.groups.length, 2);
+    assert.equal(h.controller.state().appendGroupId, originalId);
+    assert.equal(activeGroup(effectiveRandomSettings(h.ctx)).rules.length, frozenCount);
+    assert.equal(effectiveRandomSettings(h.ctx).groups.find(group => group.id === originalId).rules.at(-1).commands[0], '第三批自动结果');
+    assert.equal(frozen.rules.at(-1).commands[0], '新的剧情变化', 'the snapshot must remain permanent and unchanged');
+});

@@ -16,6 +16,11 @@ export function normalizeAutoOracle(value = {}) {
         groupId: typeof value?.groupId === 'string' ? value.groupId : null,
         ownerKey: typeof value?.ownerKey === 'string' ? value.ownerKey : null,
         useGroup: value?.useGroup === true,
+        // Chat-local overlay: never writes generated dice into the global group library.
+        appendMode: value?.appendMode === true,
+        appendGroupId: typeof value?.appendGroupId === 'string' ? value.appendGroupId : null,
+        appendRules: Array.isArray(value?.appendRules) ? value.appendRules.filter(rule =>
+            rule && typeof rule.id === 'string' && Array.isArray(rule.commands) && Array.isArray(rule.ranges)) : [],
         lastResult: value?.lastResult ?? null,
     };
 }
@@ -47,6 +52,16 @@ export function reconcileAutoOracleState(ctx) {
     const state = autoOracleState(ctx), ownerKey = autoOracleOwner(ctx);
     if (!ctx.chatMetadata?.[AUTO_ORACLE_KEY]) return { ...state, ownerKey };
     if (state.ownerKey === ownerKey) return state;
+    // Appended rules are already isolated in the copied chat metadata. Do not
+    // clone any shared configuration group just because this chat is a branch.
+    // A legacy dedicated-group reference must not become writable on the branch.
+    if (state.appendMode) {
+        state.groupId = null;
+        state.useGroup = false;
+        state.ownerKey = ownerKey;
+        saveAutoOracleState(ctx, state);
+        return state;
+    }
     const settings = ctx.extensionSettings[SETTINGS_KEY];
     const copies = new Map();
     const copyGroup = id => {
@@ -82,14 +97,34 @@ export function reconcileAutoOracleState(ctx) {
 export function effectiveRandomSettings(ctx) {
     const settings = ctx.extensionSettings[SETTINGS_KEY];
     const state = autoOracleState(ctx);
-    return state.useGroup && state.ownerKey === autoOracleOwner(ctx) && settings.groups.some(group => group.id === state.groupId)
+    if (state.ownerKey !== autoOracleOwner(ctx)) return settings;
+    const selected = state.useGroup && !state.appendMode &&
+        settings.groups.some(group => group.id === state.groupId)
         ? { ...settings, activeGroupId: state.groupId } : settings;
+    if (!state.appendMode || !state.appendRules.length ||
+        !selected.groups.some(group => group.id === state.appendGroupId)) return selected;
+    // Compose a read-only group LIST with original rule references plus chat-local
+    // auto rules. Callers can edit rule objects but must persist overlay edits
+    // to chat metadata, not mutate this composite array.
+    return { ...selected, groups: selected.groups.map(group => group.id === state.appendGroupId
+        ? { ...group, rules: [...group.rules, ...state.appendRules] } : group) };
 }
 
-export function selectRandomGroup(ctx, id) {
+export const isAutoAppendedRule = (ctx, id) => {
+    const state = autoOracleState(ctx);
+    return state.appendMode && state.ownerKey === autoOracleOwner(ctx) &&
+        state.appendRules.some(rule => rule.id === id);
+};
+
+export function selectRandomGroup(ctx, id, { keepAppendTarget = false } = {}) {
     const state = reconcileAutoOracleState(ctx);
     if (ctx.chatMetadata?.[AUTO_ORACLE_KEY]) {
-        state.useGroup = id === state.groupId;
+        if (state.appendMode) {
+            state.useGroup = false;
+            // In narrative mode, layer bindings (not the random-tab selection)
+            // determine where the chat-local overlay is injected.
+            if (!keepAppendTarget && !narrativeConfig(ctx).enabled) state.appendGroupId = id;
+        } else state.useGroup = id === state.groupId;
         saveAutoOracleState(ctx, state);
     }
     if (!state.useGroup) ctx.extensionSettings[SETTINGS_KEY].activeGroupId = id;

@@ -91,7 +91,7 @@ test('accepting the notice waits for the prompt and start button before making t
     h.fire('prompt', 'input');
     assert.deepEqual(h.calls, []);
     h.fire('form', 'submit');
-    assert.deepEqual(h.calls, [['start', { interval: 3, prompt: '围绕刚才的争执生成指令。', commandCount: 4, ruleCount: 2, diceSides: 6, mapping: 'even' }]]);
+    assert.deepEqual(h.calls, [['start', { interval: 3, prompt: '围绕刚才的争执生成指令。', commandCount: 4, ruleCount: 2, diceSides: 6, mapping: 'even', appendMode: false }]]);
     assert.equal(h.node('enabled').checked, true);
     assert.equal(h.node('start-actions').hidden, true);
     h.fire('form', 'submit');
@@ -122,7 +122,7 @@ test('invalid interval cannot enable the feature; active edits do not start anot
     h.node('prompt').value = '之后的要求'; h.fire('prompt', 'input');
     h.node('interval').value = '4'; h.fire('interval', 'change');
     assert.equal(h.calls.filter(([name]) => name === 'start').length, 1);
-    assert.deepEqual(h.calls.at(-1), ['update', { interval: 4, prompt: '之后的要求', commandCount: 10, ruleCount: 3, diceSides: 20, mapping: 'first' }]);
+    assert.deepEqual(h.calls.at(-1), ['update', { interval: 4, prompt: '之后的要求', commandCount: 10, ruleCount: 3, diceSides: 20, mapping: 'first', appendMode: false }]);
     h.dialog.dispatchEvent(new Event('close'));
     assert.equal(h.calls.filter(([name]) => name === 'stop').length, 0);
 });
@@ -140,7 +140,7 @@ test('active dice controls validate and forward changes without starting again',
     h.node('mapping').value = 'even'; h.fire('mapping', 'change');
     h.node('dice-sides').value = '100'; h.fire('dice-sides', 'change');
     assert.equal(h.calls.filter(([name]) => name === 'start').length, 1);
-    assert.deepEqual(h.calls.at(-1), ['update', { interval: 5, prompt: '', commandCount: 4, ruleCount: 2, diceSides: 100, mapping: 'even' }]);
+    assert.deepEqual(h.calls.at(-1), ['update', { interval: 5, prompt: '', commandCount: 4, ruleCount: 2, diceSides: 100, mapping: 'even', appendMode: false }]);
 });
 
 test('turning off stops automatic generation and re-enabling asks again', () => {
@@ -167,4 +167,22 @@ test('the regenerate button uses the current form and is available only when aut
     assert.equal(h.calls.at(-2)[0], 'update');
     assert.equal(h.calls.at(-2)[1].prompt, '保存本次要求');
     assert.deepEqual(h.calls.at(-1), ['regenerate']);
+});
+
+test('append-to-existing checkbox is off by default and persists without extra API calls', () => {
+    const h = fixture();
+    const html = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
+    assert.match(html, /id="ari-auto-oracle-append" type="checkbox"/);
+    assert.equal(h.node('append').checked, false);
+    h.enable(); h.accept();
+    h.node('append').checked = true; h.fire('append', 'change');
+    assert.deepEqual(h.calls, [], 'setup edits must not generate');
+    h.fire('form', 'submit');
+    assert.equal(h.calls[0][0], 'start');
+    assert.equal(h.calls[0][1].appendMode, true);
+    assert.equal(h.ctx.chatMetadata[AUTO_ORACLE_KEY].appendMode, true);
+    h.node('append').checked = false; h.fire('append', 'change');
+    assert.equal(h.calls.at(-1)[0], 'update');
+    assert.equal(h.calls.at(-1)[1].appendMode, false);
+    assert.equal(h.calls.filter(([name]) => name === 'start').length, 1);
 });

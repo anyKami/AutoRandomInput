@@ -118,6 +118,7 @@ body:has(#ari-workbench[open]) { overflow: hidden; }
 #ari-rule-count { margin-left: 5px; font-size: 10px; }
 #ari-workbench #ari-add-rule { padding: 4px 8px; font-size: 11px; color: var(--ari-accent); background: transparent; }
 #ari-rule-list { display: grid; gap: 8px; }
+#ari-workbench .ari-rule-row[data-auto="true"] .ari-rule-label { color: var(--ari-accent); }
 #ari-workbench .ari-rule-row { display: flex; align-items: center; gap: 8px; border: 1px solid var(--ari-border); border-radius: 10px; padding: 10px; }
 #ari-workbench .ari-rule-row[data-active="true"] { background: var(--ari-accent-soft); border-color: var(--ari-accent-border); }
 #ari-workbench .ari-rule-row[data-enabled="false"] .ari-rule-label { color: var(--ari-muted); }

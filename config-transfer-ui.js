@@ -129,7 +129,7 @@ export function mountConfigTransferUI(dialog, getContext, onImport) {
             const { group, config } = source;
             if (config.enabled) {
                 const groups = [config.longGroupId, config.sceneGroupId].filter((id, i, ids) => id && ids.indexOf(id) === i)
-                    .map(id => random().groups.find(item => item.id === id)).filter(Boolean);
+                    .map(id => effectiveRandomSettings(ctx).groups.find(item => item.id === id)).filter(Boolean);
                 if (!groups.length) throw new Error('当前剧情没有可导出的绑定组。');
                 text = serializeConfigFile(groups);
             } else text = serializeConfigFile([{ ...group, name }]);

@@ -7,6 +7,18 @@ import { mvuApi } from './mvu-skills.js';
 const SAME_FLOOR = new Set(['regenerate', 'swipe', 'continue', 'append', 'appendFinal', 'first_message', 'quiet', 'impersonate']);
 const chatKey = ctx => JSON.stringify([ctx.groupId != null ? null : ctx.characterId, ctx.groupId, ctx.chatId]);
 
+// Append mode targets an existing group, never creates or changes a shared one.
+// The generated tail is stored separately in this chat's metadata.
+function appendTargetGroup(ctx, narrative, auto = {}) {
+    const store = ctx.extensionSettings[SETTINGS_KEY];
+    const sceneActive = narrative.sceneGroupId && narrative.sceneGroupId !== narrative.longGroupId &&
+        narrative.sceneGroupRevision === narrative.sceneRevision;
+    const targetId = narrative.enabled
+        ? (sceneActive ? narrative.sceneGroupId : narrative.longGroupId)
+        : (store.groups.some(group => group.id === auto.appendGroupId) ? auto.appendGroupId : store.activeGroupId);
+    return store.groups.find(group => group.id === targetId) ?? null;
+}
+
 export function installAutoOracle(getContext, service, {
     onChange = () => {}, onApply = () => {}, onChatChange = () => {},
     isMainGenerating,
@@ -62,9 +74,14 @@ export function installAutoOracle(getContext, service, {
             try { data = mvuApi()?.getMvuData({ type: 'message', message_id: ctx.chat.length - 1 }); } catch { /* unavailable: retain current revision */ }
             refreshNarrativeScene(ctx, narrative, data);
         }
-        const job = { cancelled: false, sceneRevision: narrative.sceneRevision, sceneGroupId: narrative.sceneGroupId };
+        const job = { cancelled: false, sceneRevision: narrative.sceneRevision, sceneGroupId: narrative.sceneGroupId,
+            appendMode: settings.appendMode };
         task = job; onChange();
         try {
+            if (job.appendMode && !appendTargetGroup(ctx, narrative, settings))
+                throw new Error(narrative.enabled
+                    ? '追加模式需要在剧情设置中先绑定平时或有效的场景配置组。'
+                    : '追加模式需要先选择一个现有随机指令配置组。');
             const draft = await service.generate('random', { ...ctx.extensionSettings[ORACLE_SETTINGS_KEY], randomDice: settings.diceSides, ruleCount: settings.ruleCount }, settings.prompt, undefined, { commandCount: settings.commandCount });
             if (job.cancelled || !sameChat(ctx)) return;
             if (draft.error) throw new Error(draft.error);
@@ -101,6 +118,24 @@ export function installAutoOracle(getContext, service, {
             }
             if (currentNarrative.enabled !== narrative.enabled || (narrative.enabled &&
                 (currentNarrative.sceneRevision !== job.sceneRevision || currentNarrative.sceneGroupId !== job.sceneGroupId || currentNarrative.longGroupId !== narrative.longGroupId))) return;
+            // Placement is a local choice, not part of the model request.
+            // If the user changes it while Oracle is running, use their latest
+            // choice instead of accidentally creating a redundant group.
+            if (next.appendMode) {
+                const target = appendTargetGroup(ctx, currentNarrative, next);
+                if (!target) throw new Error('追加目标配置组已被删除或解绑，未应用生成结果。');
+                // One managed tail per chat. Every regeneration replaces only
+                // this tail, never the user's original dice or another chat's
+                // shared library entries. No group creation in this mode.
+                next.appendRules = generated.rules.map(rule => createRule(rule.name, rule));
+                next.appendGroupId = target.id;
+                next.useGroup = false;
+                job.applied = true;
+                const message = `已在“${target.name}”原有指令后更新 ${next.appendRules.length} 套自动骰子（仅当前聊天，不新增配置组）。${store.enabled ? '' : '随机指令总开关关闭，发送时不会追加。'}`;
+                next.lastResult = { kind: 'success', message, at: Date.now() };
+                save(next); onApply(); notify('success', message);
+                return;
+            }
             let group = store.groups.find(item => item.id === (narrative.enabled ? currentNarrative.sceneGroupId : next.groupId));
             if (narrative.enabled && group?.id === currentNarrative.longGroupId) group = null;
             if (group) {
@@ -184,12 +219,14 @@ export function installAutoOracle(getContext, service, {
         state,
         get busy() { return !!task && !task.cancelled; },
         get pending() { return queued; },
-        start({ interval, prompt, commandCount = state().commandCount, ruleCount = state().ruleCount, diceSides = state().diceSides, mapping = state().mapping }) {
+        start({ interval, prompt, commandCount = state().commandCount, ruleCount = state().ruleCount, diceSides = state().diceSides, mapping = state().mapping, appendMode = state().appendMode }) {
             if (!getContext().chat?.length) throw new Error('请先打开一个聊天。');
             if (!Number.isSafeInteger(interval) || interval < 1) throw new Error('生成间隔须为大于等于 1 的整数。');
             if (![1,2,3,4,5,6,7,8,9,10,20,100].includes(diceSides) || !Number.isSafeInteger(commandCount) || commandCount < 1 || commandCount > diceSides || !Number.isSafeInteger(ruleCount) || ruleCount < 1 || ruleCount > 10 || !['first', 'even'].includes(mapping)) throw new Error('骰子数量须为 1 到 10，指令条数须为 1 到骰子面数。');
+            if (typeof appendMode !== 'boolean') throw new Error('追加模式配置必须为布尔值。');
             const next = reconcileAutoOracleState(getContext());
-            Object.assign(next, { enabled: true, interval, prompt, commandCount, ruleCount, diceSides, mapping, progress: 0 });
+            Object.assign(next, { enabled: true, interval, prompt, commandCount, ruleCount, diceSides, mapping, appendMode, progress: 0 });
+            if (appendMode) next.useGroup = false;
             save(next); seen = new WeakSet(getContext().chat); lastFloor = getContext().chat.length - 1; queued = true; queuedManual = false;
             onChange(); return pump();
         },
@@ -203,12 +240,15 @@ export function installAutoOracle(getContext, service, {
             cancel('自动生成已关闭，本次请求已取消，已有配置保留。');
             onChange();
         },
-        update({ interval, prompt, commandCount = state().commandCount, ruleCount = state().ruleCount, diceSides = state().diceSides, mapping = state().mapping }) {
+        update({ interval, prompt, commandCount = state().commandCount, ruleCount = state().ruleCount, diceSides = state().diceSides, mapping = state().mapping, appendMode = state().appendMode }) {
             if (!Number.isSafeInteger(interval) || interval < 1) throw new Error('生成间隔须为大于等于 1 的整数。');
             if (![1,2,3,4,5,6,7,8,9,10,20,100].includes(diceSides) || !Number.isSafeInteger(commandCount) || commandCount < 1 || commandCount > diceSides || !Number.isSafeInteger(ruleCount) || ruleCount < 1 || ruleCount > 10 || !['first', 'even'].includes(mapping)) throw new Error('骰子数量须为 1 到 10，指令条数须为 1 到骰子面数。');
+            if (typeof appendMode !== 'boolean') throw new Error('追加模式配置必须为布尔值。');
             const next = reconcileAutoOracleState(getContext());
             if (next.interval !== interval) { next.progress = 0; queued = false; queuedManual = false; clearWait(); }
-            Object.assign(next, { interval, prompt, commandCount, ruleCount, diceSides, mapping }); save(next); onChange();
+            Object.assign(next, { interval, prompt, commandCount, ruleCount, diceSides, mapping, appendMode });
+            if (appendMode) next.useGroup = false;
+            save(next); onChange();
         },
     };
 }
