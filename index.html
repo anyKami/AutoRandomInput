@@ -164,7 +164,7 @@
       <dialog id="ari-auto-oracle-confirm" class="ari-transfer-card" aria-labelledby="ari-auto-oracle-confirm-title" aria-describedby="ari-auto-oracle-confirm-notice">
         <h4 id="ari-auto-oracle-confirm-title">开启自动生成？</h4>
         <p id="ari-auto-oracle-confirm-notice">此功能会增加 API 调用次数。完成设置后会立即调用故事神谕一次，之后每累计设定数量的 AI 回复再调用一次。</p>
-        <p>成功后会更新并选用本聊天的专用自动配置组。</p>
+        <p>默认更新并选用本聊天的专用自动配置组；也可勾选追加模式，直接附在现有指令后，不新建配置组。</p>
         <div class="ari-transfer-actions"><button id="ari-auto-oracle-confirm-cancel" type="button" autofocus>取消</button><button id="ari-auto-oracle-confirm-ok" class="ari-primary" type="button">继续设置</button></div>
       </dialog>
       <form id="ari-auto-oracle-form" hidden>
@@ -173,8 +173,10 @@
         <label class="ari-oracle-field"><span>骰子数量</span><input id="ari-auto-oracle-rule-count" type="number" min="1" max="10" step="1" required value="3"></label>
         <label class="ari-oracle-field"><span>骰子面数</span><select id="ari-auto-oracle-dice-sides"><option value="1">d1</option><option value="2">d2</option><option value="3">d3</option><option value="4">d4</option><option value="5">d5</option><option value="6">d6</option><option value="7">d7</option><option value="8">d8</option><option value="9">d9</option><option value="10">d10</option><option value="20" selected>d20</option><option value="100">d100</option></select></label>
         <label class="ari-oracle-field"><span>指令映射</span><select id="ari-auto-oracle-mapping"><option value="first">前 N 点有指令，后续留空</option><option value="even">均匀覆盖所有点数</option></select></label>
+        <label class="ari-toggle"><input id="ari-auto-oracle-append" type="checkbox"><span class="ari-switch"></span><span>在现有指令后追加（不新建配置组）</span></label>
+        <p id="ari-auto-oracle-append-note" class="ari-skill-note">勾选后在当前选中配置组末尾附加自动骰子；每次更新只替换自动部分，不累积、不覆盖原有手写指令。仅当前聊天生效。</p>
         <label class="ari-oracle-field"><span>自定义提示词（可留空）</span><textarea id="ari-auto-oracle-prompt" rows="4" maxlength="6000" placeholder="留空时根据近期剧情和世界书设定，为接下来几轮生成随机指令。"></textarea></label>
-        <p class="ari-skill-note">复用下方的资料来源、字符上限和超时设置；只更新专用自动组。已有手动组保留，可随时切换。</p>
+        <p class="ari-skill-note">沿用神谕的资料来源和超时设置。未勾选时使用原有专用自动组；勾选后仅更新当前聊天附加的骰子，不修改共享组库。关闭自动生成后已附加内容仍可使用。</p>
         <button id="ari-auto-oracle-regenerate" type="button">立即重新生成</button>
         <div id="ari-auto-oracle-start-actions" class="ari-transfer-actions" hidden><button class="ari-primary" type="submit">开始自动生成</button><button id="ari-auto-oracle-setup-cancel" type="button">取消设置</button></div>
       </form>
