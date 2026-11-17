@@ -7,10 +7,11 @@ export function mountAutoOracleUI(dialog, getContext, controller) {
     const interval = $('#ari-auto-oracle-interval'), prompt = $('#ari-auto-oracle-prompt');
     const commandCount = $('#ari-auto-oracle-command-count'), ruleCount = $('#ari-auto-oracle-rule-count');
     const diceSides = $('#ari-auto-oracle-dice-sides'), mapping = $('#ari-auto-oracle-mapping');
+    const appendMode = $('#ari-auto-oracle-append');
     let metadata, settingUp = false;
     function fill() {
         const state = controller.state();
-        interval.value = state.interval; prompt.value = state.prompt; commandCount.value = state.commandCount; ruleCount.value = state.ruleCount; diceSides.value = state.diceSides; mapping.value = state.mapping;
+        interval.value = state.interval; prompt.value = state.prompt; commandCount.value = state.commandCount; ruleCount.value = state.ruleCount; diceSides.value = state.diceSides; mapping.value = state.mapping; appendMode.checked = state.appendMode;
     }
     function refresh() {
         const ctx = getContext(), state = controller.state();
@@ -26,6 +27,10 @@ export function mountAutoOracleUI(dialog, getContext, controller) {
         const regenerate = $('#ari-auto-oracle-regenerate');
         regenerate.hidden = settingUp || !state.enabled;
         regenerate.disabled = controller.busy || controller.pending;
+        const group = ctx.extensionSettings[SETTINGS_KEY].groups?.find(item => item.id === state.appendGroupId);
+        $('#ari-auto-oracle-append-note').textContent = appendMode.checked
+            ? `自动骰子附在现有指令组后面，仅当前聊天生效；以后每次生成仅替换自动部分，不增加组数。${group ? `当前绑定：“${group.name}”。` : '首次成功时绑定当前选中的指令组。'}`
+            : '保持原模式：每个聊天复用自己的自动专用组，后续生成覆盖该组内容。';
         $('#ari-auto-oracle-hint').textContent = !ready ? '请先打开一个聊天，每个聊天分别开启。'
             : settingUp ? '确认间隔和提示词后，点击“开始自动生成”将立即调用一次。取消则不调用 API。'
                 : '只计新增 AI 楼层，重生成、滑动重抽和续写不计数。修改间隔会重新计数；修改提示词和数量从下次生成生效。';
@@ -46,7 +51,7 @@ export function mountAutoOracleUI(dialog, getContext, controller) {
         }
         if (!commandCount.reportValidity() || Number(commandCount.value) > Number(diceSides.value)) throw new Error('指令条数须为 1 到骰子面数的整数。');
         if (!ruleCount.reportValidity()) throw new Error('骰子数量须为 1 到 10 的整数。');
-        return { interval: count, prompt: prompt.value, commandCount: Number(commandCount.value), ruleCount: Number(ruleCount.value), diceSides: Number(diceSides.value), mapping: mapping.value };
+        return { interval: count, prompt: prompt.value, commandCount: Number(commandCount.value), ruleCount: Number(ruleCount.value), diceSides: Number(diceSides.value), mapping: mapping.value, appendMode: appendMode.checked };
     };
     const showError = error => {
         $('#ari-auto-oracle-result').textContent = error.message;
@@ -82,6 +87,7 @@ export function mountAutoOracleUI(dialog, getContext, controller) {
     ruleCount.addEventListener('change', update);
     diceSides.addEventListener('change', update);
     mapping.addEventListener('change', update);
+    appendMode.addEventListener('change', () => { if (settingUp) refresh(); else update(); });
     $('#ari-auto-oracle-regenerate').addEventListener('click', () => {
         try { controller.update(read()); void controller.regenerate(); refresh(); } catch (error) { showError(error); }
     });
