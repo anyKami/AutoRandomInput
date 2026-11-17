@@ -751,6 +751,7 @@ for (const key of ['sceneGroupId', 'longGroupId']) test(`rebinding ${key} while 
 
 test('append mode adds chat-local dice after manual dice and replaces only that tail on every cycle', async () => {
     const h = fixture(), before = structuredClone(h.store.groups[0]);
+    h.setRun(async () => JSON.stringify(autoBundle({ diceSides: 6, commandCount: 3, ruleCount: 2 })));
     await h.start(1, '', { appendMode: true, diceSides: 6, commandCount: 3, ruleCount: 2 });
     assert.equal(h.requests.length, 1);
     assert.equal(h.store.groups.length, 1, 'append must not create a group');
@@ -783,6 +784,7 @@ test('append mode preserves selected manual group and supports moving the tail w
     const { createGroup } = await import('../core.js');
     const h = fixture();
     const alternative = createGroup('第二组'); h.store.groups.push(alternative);
+    h.setRun(async () => JSON.stringify(autoBundle({ ruleCount: 1 })));
     await h.start(5, '', { appendMode: true, ruleCount: 1 });
     const old = h.store.groups[0];
     assert.equal(activeGroup(effectiveRandomSettings(h.ctx)).rules.length, old.rules.length + 1);
@@ -799,6 +801,7 @@ test('append mode preserves selected manual group and supports moving the tail w
 test('append mode isolates chat branches and other chats without creating copied groups', async () => {
     const h = fixture();
     h.ctx.chatMetadata.integrity = 'append-parent';
+    h.setRun(async () => JSON.stringify(autoBundle({ ruleCount: 2 })));
     await h.start(2, '', { appendMode: true, ruleCount: 2 });
     const parentMetadata = structuredClone(h.ctx.chatMetadata), parentChat = structuredClone(h.ctx.chat);
     const originalGroups = structuredClone(h.store.groups);
@@ -807,7 +810,7 @@ test('append mode isolates chat branches and other chats without creating copied
     await h.switchChat('分支', structuredClone(parentChat), branchMetadata);
     assert.equal(h.store.groups.length, groupCount, 'branch must not clone any group for a chat-local overlay');
     assert.equal(activeGroup(effectiveRandomSettings(h.ctx)).rules.length, h.store.groups[0].rules.length + 2);
-    h.setRun(async () => JSON.stringify(autoBundle({ command: '分支中新的指令' })));
+    h.setRun(async () => JSON.stringify(autoBundle({ command: '分支中新的指令', ruleCount: 2 })));
     await h.controller.regenerate();
     assert.equal(h.store.groups.length, groupCount);
     assert.equal(activeGroup(effectiveRandomSettings(h.ctx)).rules.at(-1).commands[0], '分支中新的指令');
