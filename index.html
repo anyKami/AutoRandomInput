@@ -61,7 +61,7 @@
       <div class="ari-rule-editor">
         <div class="ari-dice-visual" aria-hidden="true"><svg viewBox="0 0 176 166" fill="none"><path d="m88 6 73 43v76l-73 35-73-35V49L88 6Z"/><path d="m88 6 43 86-43 68-43-68L88 6Z M15 49l30 43-30 33 M161 49l-30 43 30 33 M45 92h86"/></svg><strong id="ari-dice-label">D10</strong></div>
         <div class="ari-rule-name-field"><label for="ari-rule-name">指令名称</label><input id="ari-rule-name" type="text" maxlength="40" autocomplete="off"></div>
-        <div class="ari-rule-actions"><button id="ari-copy-rule" type="button">复制指令</button><button id="ari-delete-rule" type="button">删除指令</button></div>
+        <div class="ari-rule-actions"><button id="ari-copy-rule" type="button">复制指令</button><button id="ari-delete-rule" type="button">删除指令</button><p id="ari-auto-rule-note" class="ari-skill-note" hidden>本套骰子属于当前聊天自动追加区。可编辑或暂停，但下次自动生成会覆盖自动追加区；手动创建的骰子不受影响。</p></div>
       </div>
       <div class="ari-rule-options"><label for="ari-sides">骰子范围 <select id="ari-sides" aria-label="骰子面数"></select></label><div class="ari-dice-facts"><span>抽取范围 <b id="ari-range">1–10</b></span><span><span id="ari-probability-label">每条概率</span> <b id="ari-probability">10%</b></span></div></div>
       <p id="ari-disabled-hint" hidden>此指令已暂停。启用后会参与每次发送时的独立投掷。</p>
