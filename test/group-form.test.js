@@ -33,7 +33,7 @@ function fixture() {
             return group.rules.find(rule => rule.id === scope.selectedRuleId) ?? group.rules[0];
         },
         $: node, save() { saves++; }, render() {},
-        createGroup, uniqueGroupName, selectRandomGroup,
+        createGroup, uniqueGroupName, selectRandomGroup, effectiveRandomSettings,
     };
     vm.createContext(scope);
     vm.runInContext(handlers, scope, { filename: 'index.js:group-form' });
