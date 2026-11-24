@@ -137,6 +137,11 @@ export function installAutoOracle(getContext, service, {
                 return;
             }
             let group = store.groups.find(item => item.id === (narrative.enabled ? currentNarrative.sceneGroupId : next.groupId));
+            // An append branch keeps its inherited scene for the overlay, but
+            // must not replace it when placement later changes to dedicated.
+            // Defer allocation until a valid result actually needs this write.
+            if (narrative.enabled && next.inheritedSceneGroupId && currentNarrative.sceneGroupId === next.inheritedSceneGroupId)
+                group = store.groups.find(item => item.id === next.groupId && item.id !== next.inheritedSceneGroupId);
             if (narrative.enabled && group?.id === currentNarrative.longGroupId) group = null;
             if (group) {
                 const rules = generated.rules.map(rule => createRule(rule.name, rule));
@@ -148,7 +153,11 @@ export function installAutoOracle(getContext, service, {
             }
             next.groupId = group.id;
             next.useGroup = !narrative.enabled;
-            if (narrative.enabled) { currentNarrative.sceneGroupId = group.id; currentNarrative.sceneGroupRevision = job.sceneRevision; currentNarrative.configVersion++; saveNarrativeConfig(ctx, currentNarrative); }
+            if (narrative.enabled) {
+                next.inheritedSceneGroupId = null;
+                currentNarrative.sceneGroupId = group.id; currentNarrative.sceneGroupRevision = job.sceneRevision;
+                currentNarrative.configVersion++; saveNarrativeConfig(ctx, currentNarrative);
+            }
             job.applied = true;
             const message = `已更新并选用“${group.name}”，共 ${group.rules.length} 套指令。${store.enabled ? '' : '随机指令总开关关闭，发送时不会追加。'}`;
             next.lastResult = { kind: 'success', message, at: Date.now() };

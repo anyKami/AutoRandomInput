@@ -15,6 +15,7 @@ export function normalizeAutoOracle(value = {}) {
         progress: Number.isSafeInteger(value?.progress) && value.progress >= 0 ? value.progress : 0,
         groupId: typeof value?.groupId === 'string' ? value.groupId : null,
         ownerKey: typeof value?.ownerKey === 'string' ? value.ownerKey : null,
+        inheritedSceneGroupId: typeof value?.inheritedSceneGroupId === 'string' ? value.inheritedSceneGroupId : null,
         useGroup: value?.useGroup === true,
         // Chat-local overlay: never writes generated dice into the global group library.
         appendMode: value?.appendMode === true,
@@ -50,14 +51,27 @@ export function saveAutoOracleState(ctx, state) {
 // shared group. Keep the original group and all saved options/progress intact.
 export function reconcileAutoOracleState(ctx) {
     const state = autoOracleState(ctx), ownerKey = autoOracleOwner(ctx);
-    if (!ctx.chatMetadata?.[AUTO_ORACLE_KEY]) return { ...state, ownerKey };
-    if (state.ownerKey === ownerKey) return state;
+    const saved = ctx.chatMetadata?.[AUTO_ORACLE_KEY];
+    if (!saved) return { ...state, ownerKey };
+    const narrative = narrativeConfig(ctx);
+    if (state.ownerKey === ownerKey) {
+        // Older append branches already claimed their owner. A dedicated group
+        // created outside narrative mode does not own the appended scene.
+        if (!Object.hasOwn(saved, 'inheritedSceneGroupId')) {
+            if (narrative.sceneGroupId && narrative.sceneGroupId !== narrative.longGroupId &&
+                narrative.sceneGroupId !== state.groupId && (!state.groupId || narrative.sceneGroupId === state.appendGroupId))
+                state.inheritedSceneGroupId = narrative.sceneGroupId;
+            saveAutoOracleState(ctx, state);
+        }
+        return state;
+    }
     // Appended rules are already isolated in the copied chat metadata. Do not
     // clone any shared configuration group just because this chat is a branch.
     // A legacy dedicated-group reference must not become writable on the branch.
     if (state.appendMode) {
         state.groupId = null;
         state.useGroup = false;
+        state.inheritedSceneGroupId = narrative.sceneGroupId !== narrative.longGroupId ? narrative.sceneGroupId : null;
         state.ownerKey = ownerKey;
         saveAutoOracleState(ctx, state);
         return state;
@@ -78,7 +92,6 @@ export function reconcileAutoOracleState(ctx) {
     // branch must not retain that writable reference, even if the user rebound
     // it since the last auto update. The explicitly maintained long layer stays
     // shared; all current preferences and scene-version fields are preserved.
-    const narrative = narrativeConfig(ctx);
     if (narrative.sceneGroupId && narrative.sceneGroupId !== narrative.longGroupId) {
         const sceneGroupId = copyGroup(narrative.sceneGroupId);
         if (sceneGroupId) {
@@ -86,6 +99,7 @@ export function reconcileAutoOracleState(ctx) {
             saveNarrativeConfig(ctx, narrative);
         }
     }
+    state.inheritedSceneGroupId = null;
     state.ownerKey = ownerKey;
     saveAutoOracleState(ctx, state);
     if (copies.size) ctx.saveSettingsDebounced();

@@ -910,6 +910,140 @@ test('narrative append selects an active scene group ahead of the long group', a
     assert.equal(effective.groups.find(group => group.id === scene.id).rules.length, scene.rules.length + 3);
 });
 
+for (const legacyMode of [null, true, false]) for (const trigger of ['manual regeneration', 'interval-1 reply']) test(`a narrative append branch isolates its scene on ${trigger} (saved placement: ${legacyMode ?? 'new'})`, async () => {
+    const { NARRATIVE_KEY } = await import('../narrative.js');
+    const { createGroup } = await import('../core.js');
+    const h = fixture(), interval = trigger === 'interval-1 reply' ? 1 : 5;
+    h.ctx.chatMetadata.integrity = 'append-scene-parent';
+    const long = h.store.groups[0], scene = createGroup('原聊天场景');
+    long.rules[0].commands[0] = '保留平时指令';
+    scene.rules[0].commands[0] = '保留原聊天场景指令';
+    h.store.groups.push(scene);
+    h.ctx.chatMetadata[NARRATIVE_KEY] = { enabled: true, longGroupId: long.id,
+        sceneGroupId: scene.id, sceneRevision: 'active', sceneGroupRevision: 'active', preferences: '保留剧情偏好' };
+    const originalGroups = structuredClone(h.store.groups);
+    await h.start(interval, '保留自动提示词', { appendMode: true });
+    const parent = { chat: h.ctx.chat, metadata: h.ctx.chatMetadata };
+    const parentSnapshot = structuredClone(parent.metadata);
+    await h.switchChat('剧情追加分支', structuredClone(parent.chat), {
+        ...structuredClone(parent.metadata), integrity: 'append-scene-branch',
+    });
+    if (legacyMode !== null) {
+        h.controller.update({ interval, prompt: '保留自动提示词', appendMode: legacyMode });
+        const metadata = structuredClone(h.ctx.chatMetadata);
+        delete metadata[AUTO_ORACLE_KEY].inheritedSceneGroupId;
+        await h.switchChat('剧情追加分支', structuredClone(h.ctx.chat), metadata);
+    }
+    assert.deepEqual(h.store.groups, originalGroups, 'entering an append branch must not copy any group');
+    assert.equal(h.controller.state().appendGroupId, scene.id);
+    assert.equal(h.requests.length, 1, 'entering the branch must not generate');
+    if (trigger === 'manual regeneration') await h.receive('尚未达到保存的间隔');
+    const progress = h.controller.state().progress;
+    h.controller.update({ interval, prompt: '保留自动提示词', appendMode: false });
+    assert.equal(h.requests.length, 1, 'changing placement must not generate');
+    h.setRun(async () => JSON.stringify(autoBundle({ command: '仅供分支的新场景指令' })));
+    if (trigger === 'manual regeneration') await h.controller.regenerate();
+    else { await h.send(); await h.receive(); }
+    assert.equal(h.requests.length, 2);
+    assert.equal(h.controller.state().lastResult.kind, 'success');
+    assert.deepEqual(h.store.groups.find(group => group.id === long.id), originalGroups[0], 'the usual group must remain unchanged');
+    assert.deepEqual(h.store.groups.find(group => group.id === scene.id), originalGroups[1], 'the parent scene group must remain unchanged');
+    const branchId = h.ctx.chatMetadata[NARRATIVE_KEY].sceneGroupId;
+    assert.notEqual(branchId, scene.id);
+    assert.equal(h.controller.state().groupId, branchId);
+    assert.equal(h.store.groups.length, originalGroups.length + 1, 'allocate only one independent scene group');
+    assert.equal(h.store.groups.find(group => group.id === branchId).rules[0].commands[0], '仅供分支的新场景指令');
+    assert.equal(h.ctx.chatMetadata[NARRATIVE_KEY].longGroupId, long.id);
+    assert.equal(h.ctx.chatMetadata[NARRATIVE_KEY].sceneGroupRevision, 'active');
+    assert.equal(h.ctx.chatMetadata[NARRATIVE_KEY].preferences, '保留剧情偏好');
+    assert.equal(h.controller.state().interval, interval);
+    assert.equal(h.controller.state().progress, trigger === 'manual regeneration' ? progress : 0);
+    assert.equal(h.controller.state().prompt, '保留自动提示词');
+    assert.deepEqual(parent.metadata, parentSnapshot);
+
+    h.controller.update({ interval, prompt: '保留自动提示词', appendMode: true });
+    await h.controller.regenerate();
+    h.controller.update({ interval, prompt: '保留自动提示词', appendMode: false });
+    await h.controller.regenerate();
+    await h.emit('CHAT_CHANGED');
+    assert.equal(h.controller.state().groupId, branchId, 'mode changes and reconciliation must reuse the independent group');
+    assert.equal(h.store.groups.length, originalGroups.length + 1);
+    assert.deepEqual(h.store.groups.slice(0, originalGroups.length), originalGroups);
+    await h.switchChat('聊天甲', parent.chat, parent.metadata);
+    assert.equal(h.ctx.chatMetadata[NARRATIVE_KEY].sceneGroupId, scene.id);
+    assert.equal(h.controller.state().appendMode, true);
+    assert.equal(effectiveRandomSettings(h.ctx).groups.find(group => group.id === scene.id).rules.at(-1).commands[0], '新的剧情变化');
+});
+
+for (const legacyMode of [null, true, false]) for (const deleteScene of [false, true]) test(`a narrative branch reuses its dedicated group after restoring narrative (saved placement: ${legacyMode ?? 'new'}, deleted scene: ${deleteScene})`, async () => {
+    const { NARRATIVE_KEY } = await import('../narrative.js');
+    const { createGroup } = await import('../core.js');
+    const h = fixture(), scene = createGroup('继承场景');
+    h.ctx.chatMetadata.integrity = 'dedicated-parent';
+    h.store.groups.push(scene);
+    h.ctx.chatMetadata[NARRATIVE_KEY] = { enabled: true, longGroupId: h.store.groups[0].id,
+        sceneGroupId: scene.id, sceneRevision: 'active', sceneGroupRevision: 'active' };
+    const originalGroups = structuredClone(h.store.groups);
+    await h.start(1, '', { appendMode: true });
+    await h.switchChat('已有独立组的分支', structuredClone(h.ctx.chat), {
+        ...structuredClone(h.ctx.chatMetadata), integrity: 'dedicated-branch',
+    });
+    h.ctx.chatMetadata[NARRATIVE_KEY].enabled = false;
+    h.controller.update({ interval: 1, prompt: '', appendMode: false });
+    await h.controller.regenerate();
+    const dedicated = h.controller.state().groupId;
+    assert.notEqual(dedicated, scene.id);
+    if (legacyMode !== null) {
+        h.controller.update({ interval: 1, prompt: '', appendMode: legacyMode });
+        const metadata = structuredClone(h.ctx.chatMetadata);
+        delete metadata[AUTO_ORACLE_KEY].inheritedSceneGroupId;
+        await h.switchChat('已有独立组的分支', structuredClone(h.ctx.chat), metadata);
+    }
+    if (deleteScene) h.store.groups.splice(h.store.groups.findIndex(group => group.id === scene.id), 1);
+    const groupCount = h.store.groups.length;
+    h.ctx.chatMetadata[NARRATIVE_KEY].enabled = true;
+    h.controller.update({ interval: 1, prompt: '', appendMode: false });
+    h.setRun(async () => JSON.stringify(autoBundle({ command: '复用分支独立组' })));
+    await h.controller.regenerate();
+    assert.equal(h.controller.state().lastResult.kind, 'success');
+    assert.deepEqual(h.store.groups[0], originalGroups[0]);
+    if (!deleteScene) assert.deepEqual(h.store.groups.find(group => group.id === scene.id), originalGroups[1]);
+    assert.equal(h.store.groups.length, groupCount, 'an existing independent group must be reused even if the inherited scene was deleted');
+    assert.equal(h.controller.state().groupId, dedicated);
+    assert.equal(h.ctx.chatMetadata[NARRATIVE_KEY].sceneGroupId, dedicated);
+    assert.equal(h.store.groups.find(group => group.id === dedicated).rules[0].commands[0], '复用分支独立组');
+});
+
+for (const appendMode of [false, true]) test(`a narrative branch applies an in-flight result using its latest append setting (${appendMode})`, async () => {
+    const { NARRATIVE_KEY } = await import('../narrative.js');
+    const { createGroup } = await import('../core.js');
+    const h = fixture(), scene = createGroup('继承场景');
+    h.ctx.chatMetadata.integrity = 'pending-parent';
+    h.store.groups.push(scene);
+    h.ctx.chatMetadata[NARRATIVE_KEY] = { enabled: true, longGroupId: h.store.groups[0].id,
+        sceneGroupId: scene.id, sceneRevision: 'active', sceneGroupRevision: 'active' };
+    await h.start(1, '', { appendMode: true });
+    await h.switchChat('请求中的分支', structuredClone(h.ctx.chat), {
+        ...structuredClone(h.ctx.chatMetadata), integrity: 'pending-branch',
+    });
+    const before = structuredClone(h.store.groups), response = deferred();
+    h.setRun(() => response.promise);
+    const pending = h.controller.regenerate(); await tick();
+    h.controller.update({ interval: 1, prompt: '', appendMode: false });
+    if (appendMode) h.controller.update({ interval: 1, prompt: '', appendMode: true });
+    assert.deepEqual(h.store.groups, before, 'mode changes must not allocate or mutate a group');
+    response.resolve(JSON.stringify(autoBundle({ command: '请求期间切换模式后的结果' })));
+    await pending;
+    assert.equal(h.requests.length, 2);
+    assert.equal(h.controller.state().lastResult.kind, 'success');
+    assert.deepEqual(h.store.groups.slice(0, before.length), before);
+    assert.equal(h.store.groups.length, before.length + Number(!appendMode));
+    const id = h.ctx.chatMetadata[NARRATIVE_KEY].sceneGroupId;
+    if (appendMode) assert.equal(id, scene.id);
+    else assert.notEqual(id, scene.id);
+    assert.equal(effectiveRandomSettings(h.ctx).groups.find(group => group.id === id).rules.at(-1).commands[0], '请求期间切换模式后的结果');
+});
+
 test('a frozen copy does not steal the future append target when next interval generates', async () => {
     const { createGroup } = await import('../core.js');
     const h = fixture();
