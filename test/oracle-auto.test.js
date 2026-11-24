@@ -84,7 +84,8 @@ function fixture({ saved, fallbackEvent = false, afterCommands = false, hostStat
 test('defaults are off; opening settings, receiving replies, and restoring a chat never call the API', async () => {
     const h = fixture();
     assert.equal(normalizeAutoOracle().enabled, false);
-    assert.equal(normalizeAutoOracle().interval, 5);
+    assert.equal(normalizeAutoOracle().interval, 1);
+    assert.equal(normalizeAutoOracle({ interval: 5 }).interval, 5);
     await h.receive(); await h.emit('CHAT_CHANGED');
     assert.equal(h.requests.length, 0);
     assert.equal(h.ctx.chatMetadata[AUTO_ORACLE_KEY], undefined);
@@ -92,6 +93,7 @@ test('defaults are off; opening settings, receiving replies, and restoring a cha
     await restored.emit('CHAT_CHANGED'); await tick();
     assert.equal(restored.requests.length, 0);
     assert.equal(restored.controller.state().progress, 2);
+    assert.equal(restored.controller.state().interval, 3);
     const { commandCount, ruleCount, diceSides, mapping } = restored.controller.state();
     assert.deepEqual({ commandCount, ruleCount, diceSides, mapping }, { commandCount: 10, ruleCount: 3, diceSides: 20, mapping: 'first' });
     await restored.receive();
