@@ -55,6 +55,7 @@ test('automatic form exposes the supported dice, mapping choices and numeric bou
     const dice = html.match(/id="ari-auto-oracle-dice-sides">([^<]*(?:<option[^>]*>[^<]*<\/option>)*)<\/select>/)[1];
     assert.deepEqual([...dice.matchAll(/<option value="(\d+)"/g)].map(match => Number(match[1])), DICE_SIDES);
     assert.match(dice, /value="20" selected/);
+    assert.match(html, /id="ari-auto-oracle-interval"[^>]*min="1"[^>]*step="1"[^>]*required[^>]*value="1"/);
     assert.match(html, /id="ari-auto-oracle-command-count"[^>]*min="1"[^>]*max="100"[^>]*value="10"/);
     assert.match(html, /id="ari-auto-oracle-rule-count"[^>]*min="1"[^>]*max="10"[^>]*value="3"/);
     assert.match(html, /id="ari-auto-oracle-mapping">\s*<option value="first"[^>]*>[^<]*<\/option>\s*<option value="even"/);
@@ -85,6 +86,7 @@ test('accepting the notice waits for the prompt and start button before making t
     h.accept();
     assert.equal(h.node('form').hidden, false);
     assert.equal(h.node('enabled').checked, false);
+    assert.equal(h.node('interval').value, '1');
     h.node('interval').value = '3'; h.node('prompt').value = '围绕刚才的争执生成指令。';
     h.node('command-count').value = '4'; h.node('rule-count').value = '2';
     h.node('dice-sides').value = '6'; h.node('mapping').value = 'even';
@@ -140,7 +142,7 @@ test('active dice controls validate and forward changes without starting again',
     h.node('mapping').value = 'even'; h.fire('mapping', 'change');
     h.node('dice-sides').value = '100'; h.fire('dice-sides', 'change');
     assert.equal(h.calls.filter(([name]) => name === 'start').length, 1);
-    assert.deepEqual(h.calls.at(-1), ['update', { interval: 5, prompt: '', commandCount: 4, ruleCount: 2, diceSides: 100, mapping: 'even', appendMode: false }]);
+    assert.deepEqual(h.calls.at(-1), ['update', { interval: 1, prompt: '', commandCount: 4, ruleCount: 2, diceSides: 100, mapping: 'even', appendMode: false }]);
 });
 
 test('turning off stops automatic generation and re-enabling asks again', () => {

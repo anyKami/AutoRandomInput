@@ -6,7 +6,7 @@ export const AUTO_ORACLE_KEY = 'auto_random_input_auto_oracle';
 export function normalizeAutoOracle(value = {}) {
     return {
         enabled: value?.enabled === true,
-        interval: Number.isSafeInteger(value?.interval) && value.interval > 0 ? value.interval : 5,
+        interval: Number.isSafeInteger(value?.interval) && value.interval > 0 ? value.interval : 1,
         commandCount: Number.isSafeInteger(value?.commandCount) && value.commandCount >= 1 && value.commandCount <= 100 ? value.commandCount : 10,
         diceSides: [1,2,3,4,5,6,7,8,9,10,20,100].includes(value?.diceSides) ? value.diceSides : 20,
         mapping: value?.mapping === 'even' ? 'even' : 'first',
